@@ -202,7 +202,19 @@ final class GPW_GitHub_API {
 		}
 
 		if (404 === $status_code) {
-			$message = __('Latest release not found (404). Ensure a published release exists.', 'git-plugins-wordpress');
+			$fallback_release = $this->get_latest_release_from_list($repo_full_name, $headers);
+			if (is_array($fallback_release)) {
+				GPW_Cache_Manager::set($cache_key, $fallback_release, 12 * HOUR_IN_SECONDS);
+				$this->clear_last_error();
+				return $fallback_release;
+			}
+
+			if (is_wp_error($fallback_release)) {
+				$this->set_last_error($fallback_release->get_error_message());
+				return $fallback_release;
+			}
+
+			$message = __('Latest release not found (404). Ensure a published release exists. For private repositories, verify the PAT has repository read access.', 'git-plugins-wordpress');
 			$this->set_last_error($message);
 			return new WP_Error('gpw_release_not_found', $message);
 		}
@@ -216,6 +228,98 @@ final class GPW_GitHub_API {
 		$this->set_last_error($message);
 
 		return new WP_Error('gpw_api_error', $message);
+	}
+
+	/**
+	 * Fallback release lookup using the releases list endpoint.
+	 *
+	 * This handles repositories where /releases/latest returns 404, such as
+	 * prerelease-only repositories.
+	 *
+	 * @param string               $repo_full_name Repository full name (owner/repo).
+	 * @param array<string, mixed> $headers        HTTP headers.
+	 *
+	 * @return array<string, mixed>|WP_Error|null
+	 */
+	private function get_latest_release_from_list(string $repo_full_name, array $headers) {
+		$url = sprintf('%1$s/repos/%2$s/releases?per_page=10', self::API_BASE, $this->encode_repo_full_name($repo_full_name));
+
+		$response = wp_remote_get(
+			$url,
+			array(
+				'headers' => $headers,
+				'timeout' => 20,
+			)
+		);
+
+		if (is_wp_error($response)) {
+			$transport_error = sanitize_text_field($response->get_error_message());
+			return new WP_Error(
+				'gpw_http_request_failed',
+				sprintf(
+					/* translators: %s: HTTP transport error message. */
+					__('Could not reach the GitHub API. Transport error: %s', 'git-plugins-wordpress'),
+					$transport_error
+				)
+			);
+		}
+
+		$status_code = (int) wp_remote_retrieve_response_code($response);
+		$body        = wp_remote_retrieve_body($response);
+		$data        = json_decode($body, true);
+
+		if (200 === $status_code && is_array($data)) {
+			foreach ($data as $release) {
+				if (! is_array($release)) {
+					continue;
+				}
+
+				$is_draft = isset($release['draft']) ? (bool) $release['draft'] : false;
+				if ($is_draft) {
+					continue;
+				}
+
+				return $release;
+			}
+
+			return new WP_Error(
+				'gpw_release_not_found',
+				__('No published release was found for this repository.', 'git-plugins-wordpress')
+			);
+		}
+
+		$error_message = is_array($data) && isset($data['message']) ? (string) $data['message'] : __('GitHub API returned an unexpected response.', 'git-plugins-wordpress');
+
+		if ($this->should_lockout_for_rate_limit($status_code, $response, $error_message)) {
+			return new WP_Error(
+				'gpw_rate_limited',
+				__('GitHub API rate limit reached. Requests are paused for one hour.', 'git-plugins-wordpress')
+			);
+		}
+
+		if (401 === $status_code) {
+			return new WP_Error(
+				'gpw_unauthorized',
+				__('GitHub authentication failed (401). Check your Personal Access Token.', 'git-plugins-wordpress')
+			);
+		}
+
+		if (404 === $status_code) {
+			return new WP_Error(
+				'gpw_release_not_found',
+				__('Latest release not found (404). Ensure the repository exists and is accessible. For private repositories, verify the PAT has repository read access.', 'git-plugins-wordpress')
+			);
+		}
+
+		return new WP_Error(
+			'gpw_api_error',
+			sprintf(
+				/* translators: 1: HTTP status code, 2: API error message. */
+				__('GitHub API error (%1$d): %2$s', 'git-plugins-wordpress'),
+				$status_code,
+				$error_message
+			)
+		);
 	}
 
 	/**
