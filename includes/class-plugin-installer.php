@@ -101,9 +101,9 @@ final class GPW_Plugin_Installer {
 		}
 
 		if (! $result) {
-			$error_message = $skin->get_error();
-			if ($error_message instanceof WP_Error) {
-				$this->redirect_with_error($error_message->get_error_message());
+			$error_message = $this->get_upgrader_error_message($upgrader, $skin);
+			if ('' !== $error_message) {
+				$this->redirect_with_error($error_message);
 			}
 
 			$this->redirect_with_error(__('Plugin installation failed.', 'git-plugins-wordpress'));
@@ -274,6 +274,40 @@ final class GPW_Plugin_Installer {
 			if (str_ends_with(strtolower($name), '.zip')) {
 				return $url;
 			}
+		}
+
+		return '';
+	}
+
+	/**
+	 * Extract a useful error message from upgrader state.
+	 *
+	 * @param Plugin_Upgrader         $upgrader Upgrader instance.
+	 * @param Automatic_Upgrader_Skin $skin     Upgrader skin.
+	 *
+	 * @return string
+	 */
+	private function get_upgrader_error_message(Plugin_Upgrader $upgrader, Automatic_Upgrader_Skin $skin): string {
+		if (method_exists($skin, 'get_errors')) {
+			$errors = $skin->get_errors();
+			if ($errors instanceof WP_Error && $errors->has_errors()) {
+				return $errors->get_error_message();
+			}
+		}
+
+		if (isset($skin->result) && $skin->result instanceof WP_Error) {
+			return $skin->result->get_error_message();
+		}
+
+		if (isset($upgrader->skin) && is_object($upgrader->skin) && method_exists($upgrader->skin, 'get_errors')) {
+			$errors = $upgrader->skin->get_errors();
+			if ($errors instanceof WP_Error && $errors->has_errors()) {
+				return $errors->get_error_message();
+			}
+		}
+
+		if (isset($upgrader->skin) && is_object($upgrader->skin) && isset($upgrader->skin->result) && $upgrader->skin->result instanceof WP_Error) {
+			return $upgrader->skin->result->get_error_message();
 		}
 
 		return '';
