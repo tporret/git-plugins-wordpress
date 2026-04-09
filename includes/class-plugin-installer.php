@@ -13,6 +13,11 @@ defined('ABSPATH') || exit;
  */
 final class GPW_Plugin_Installer {
 	/**
+	 * Option key for active repositories.
+	 */
+	private const ACTIVE_REPOS_OPTION = 'gpw_active_repos';
+
+	/**
 	 * Redirect page slug after actions.
 	 */
 	private const REDIRECT_PAGE = 'gpw-available-plugins';
@@ -47,6 +52,7 @@ final class GPW_Plugin_Installer {
 	 */
 	public function register_hooks(): void {
 		add_action('admin_post_gpw_install_repo', array($this, 'handle_install_repo'));
+		add_action('admin_post_gpw_uninstall_repo', array($this, 'handle_uninstall_repo'));
 	}
 
 	/**
@@ -103,11 +109,104 @@ final class GPW_Plugin_Installer {
 			$this->redirect_with_error(__('Plugin installation failed.', 'git-plugins-wordpress'));
 		}
 
+		$active_repos   = (array) get_option(self::ACTIVE_REPOS_OPTION, array());
+		$active_repos[] = $repo_full_name;
+		update_option(self::ACTIVE_REPOS_OPTION, array_values(array_unique($active_repos)), false);
+
 		wp_safe_redirect(
 			add_query_arg(
 				array(
 					'page'       => self::REDIRECT_PAGE,
 					'gpw_notice' => 'install-success',
+				),
+				admin_url('admin.php')
+			)
+		);
+		exit;
+	}
+
+	/**
+	 * Uninstall a plugin managed by a GitHub repository.
+	 *
+	 * @return void
+	 */
+	public function handle_uninstall_repo(): void {
+		if (! current_user_can('delete_plugins')) {
+			wp_die(esc_html__('You are not allowed to delete plugins.', 'git-plugins-wordpress'));
+		}
+
+		$repo_full_name = isset($_GET['repo_full_name']) ? sanitize_text_field(wp_unslash((string) $_GET['repo_full_name'])) : '';
+		$plugin_file    = isset($_GET['plugin_file']) ? sanitize_text_field(wp_unslash((string) $_GET['plugin_file'])) : '';
+
+		if ('' === $repo_full_name || '' === $plugin_file) {
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'       => self::REDIRECT_PAGE,
+						'gpw_notice' => 'uninstall-failed',
+						'message'    => sanitize_text_field(__('Required parameters are missing.', 'git-plugins-wordpress')),
+					),
+					admin_url('admin.php')
+				)
+			);
+			exit;
+		}
+
+		check_admin_referer('gpw_uninstall_repo_' . $repo_full_name, 'gpw_uninstall_nonce');
+
+		if (! function_exists('get_plugins')) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		$installed_plugins = get_plugins();
+		if (! array_key_exists($plugin_file, $installed_plugins)) {
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'       => self::REDIRECT_PAGE,
+						'gpw_notice' => 'uninstall-failed',
+						'message'    => sanitize_text_field(__('Plugin is not installed.', 'git-plugins-wordpress')),
+					),
+					admin_url('admin.php')
+				)
+			);
+			exit;
+		}
+
+		if (is_plugin_active($plugin_file)) {
+			deactivate_plugins($plugin_file, true);
+		}
+
+		require_once ABSPATH . 'wp-admin/includes/file.php';
+
+		$deleted = delete_plugins(array($plugin_file));
+		if (is_wp_error($deleted)) {
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'       => self::REDIRECT_PAGE,
+						'gpw_notice' => 'uninstall-failed',
+						'message'    => sanitize_text_field($deleted->get_error_message()),
+					),
+					admin_url('admin.php')
+				)
+			);
+			exit;
+		}
+
+		$active_repos = array_values(
+			array_filter(
+				(array) get_option(self::ACTIVE_REPOS_OPTION, array()),
+				static fn(mixed $r): bool => is_string($r) && $r !== $repo_full_name
+			)
+		);
+		update_option(self::ACTIVE_REPOS_OPTION, $active_repos, false);
+
+		wp_safe_redirect(
+			add_query_arg(
+				array(
+					'page'       => self::REDIRECT_PAGE,
+					'gpw_notice' => 'uninstall-success',
 				),
 				admin_url('admin.php')
 			)

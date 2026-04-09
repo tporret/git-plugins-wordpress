@@ -155,8 +155,9 @@ final class GPW_Admin_Repos_Page {
 									$description    = isset($repository['description']) ? sanitize_text_field((string) $repository['description']) : '';
 									$release        = '' !== $repo_full_name ? $this->github_api->get_latest_release($repo_full_name) : new WP_Error('gpw_missing_repo_name', __('Repository data is incomplete.', 'git-plugins-wordpress'));
 									$version        = is_wp_error($release) ? esc_html__('Unavailable', 'git-plugins-wordpress') : (isset($release['tag_name']) ? sanitize_text_field((string) $release['tag_name']) : esc_html__('N/A', 'git-plugins-wordpress'));
-									$is_active      = in_array($repo_full_name, $active_repos, true);
-									$is_installed   = in_array(strtolower($repo_name), $installed, true);
+									$plugin_file    = $installed[ strtolower($repo_name) ] ?? '';
+									$is_installed   = '' !== $plugin_file;
+									$is_active      = in_array($repo_full_name, $active_repos, true) || ($is_installed && is_plugin_active($plugin_file));
 									?>
 									<tr>
 										<td>
@@ -179,7 +180,21 @@ final class GPW_Admin_Repos_Page {
 										</td>
 										<td>
 											<?php if ($is_installed) : ?>
-												<span class="button disabled" aria-disabled="true"><?php echo esc_html__('Installed', 'git-plugins-wordpress'); ?></span>
+												<?php
+												$uninstall_url = wp_nonce_url(
+													add_query_arg(
+														array(
+															'action'         => 'gpw_uninstall_repo',
+															'repo_full_name' => $repo_full_name,
+															'plugin_file'    => $plugin_file,
+														),
+														admin_url('admin-post.php')
+													),
+													'gpw_uninstall_repo_' . $repo_full_name,
+													'gpw_uninstall_nonce'
+												);
+												?>
+												<a class="button button-secondary" href="<?php echo esc_url($uninstall_url); ?>" onclick="return confirm('<?php echo esc_js(__('Are you sure you want to uninstall this plugin?', 'git-plugins-wordpress')); ?>')"><?php echo esc_html__('Uninstall', 'git-plugins-wordpress'); ?></a>
 											<?php else : ?>
 												<?php
 												$install_url = wp_nonce_url(
@@ -246,6 +261,25 @@ final class GPW_Admin_Repos_Page {
 			);
 		}
 
+		if ('uninstall-success' === $notice) {
+			add_settings_error(
+				'gpw_messages',
+				'gpw_uninstall_success',
+				esc_html__('Plugin uninstalled successfully.', 'git-plugins-wordpress'),
+				'success'
+			);
+		}
+
+		if ('uninstall-failed' === $notice) {
+			$message = isset($_GET['message']) ? sanitize_text_field(wp_unslash((string) $_GET['message'])) : __('Plugin uninstall failed.', 'git-plugins-wordpress');
+			add_settings_error(
+				'gpw_messages',
+				'gpw_uninstall_failed',
+				esc_html($message),
+				'error'
+			);
+		}
+
 		$last_api_error = $this->github_api->get_last_error(true);
 		if ('' !== $last_api_error) {
 			add_settings_error(
@@ -280,9 +314,9 @@ final class GPW_Admin_Repos_Page {
 	}
 
 	/**
-	 * Build list of installed plugin directory names.
+	 * Build map of installed plugin directory names to plugin file paths.
 	 *
-	 * @return array<int, string>
+	 * @return array<string, string> Lowercase directory name => plugin file path.
 	 */
 	private function get_installed_plugin_dirs(): array {
 		if (! function_exists('get_plugins')) {
@@ -290,15 +324,15 @@ final class GPW_Admin_Repos_Page {
 		}
 
 		$installed_plugins = get_plugins();
-		$dirs              = array();
+		$map               = array();
 
 		foreach (array_keys($installed_plugins) as $plugin_file) {
 			$dir = dirname($plugin_file);
 			if ('.' !== $dir) {
-				$dirs[] = strtolower((string) $dir);
+				$map[ strtolower((string) $dir) ] = $plugin_file;
 			}
 		}
 
-		return array_values(array_unique($dirs));
+		return $map;
 	}
 }
