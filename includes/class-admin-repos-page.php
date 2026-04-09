@@ -153,7 +153,7 @@ final class GPW_Admin_Repos_Page {
 									$repo_name      = isset($repository['name']) ? sanitize_text_field((string) $repository['name']) : '';
 									$repo_full_name = isset($repository['full_name']) ? sanitize_text_field((string) $repository['full_name']) : '';
 									$description    = isset($repository['description']) ? sanitize_text_field((string) $repository['description']) : '';
-									$release        = '' !== $repo_full_name ? $this->github_api->get_latest_release($repo_full_name) : new WP_Error('gpw_missing_repo_name', __('Repository data is incomplete.', 'git-plugins-wordpress'));
+									$release        = '' !== $repo_full_name ? $this->github_api->get_latest_release($repo_full_name, false) : new WP_Error('gpw_missing_repo_name', __('Repository data is incomplete.', 'git-plugins-wordpress'));
 									$version        = is_wp_error($release) ? esc_html__('Unavailable', 'git-plugins-wordpress') : (isset($release['tag_name']) ? sanitize_text_field((string) $release['tag_name']) : esc_html__('N/A', 'git-plugins-wordpress'));
 									$plugin_file    = $installed[ strtolower($repo_name) ] ?? '';
 									$is_installed   = '' !== $plugin_file;

@@ -121,20 +121,25 @@ final class GPW_GitHub_API {
 	 * Get latest release for a repository.
 	 *
 	 * @param string $repo_full_name Repository full name (owner/repo).
+	 * @param bool   $persist_error  Whether to store API errors for admin notices.
 	 *
 	 * @return array<string, mixed>|WP_Error
 	 */
-	public function get_latest_release(string $repo_full_name) {
+	public function get_latest_release(string $repo_full_name, bool $persist_error = true) {
 		if ($this->is_rate_limited()) {
 			$message = __('GitHub API rate limit lockout is active. Try again later.', 'git-plugins-wordpress');
-			$this->set_last_error($message);
+			if ($persist_error) {
+				$this->set_last_error($message);
+			}
 			return new WP_Error('gpw_rate_limited', $message);
 		}
 
 		$repo_full_name = sanitize_text_field($repo_full_name);
 		if ('' === $repo_full_name || ! str_contains($repo_full_name, '/')) {
 			$message = __('Invalid repository name.', 'git-plugins-wordpress');
-			$this->set_last_error($message);
+			if ($persist_error) {
+				$this->set_last_error($message);
+			}
 			return new WP_Error('gpw_invalid_repo_name', $message);
 		}
 
@@ -173,7 +178,9 @@ final class GPW_GitHub_API {
 				__('Could not reach the GitHub API. Transport error: %s', 'git-plugins-wordpress'),
 				$transport_error
 			);
-			$this->set_last_error($message);
+			if ($persist_error) {
+				$this->set_last_error($message);
+			}
 			return new WP_Error('gpw_http_request_failed', $message);
 		}
 
@@ -183,7 +190,9 @@ final class GPW_GitHub_API {
 
 		if (200 === $status_code && is_array($data)) {
 			GPW_Cache_Manager::set($cache_key, $data, 12 * HOUR_IN_SECONDS);
-			$this->clear_last_error();
+			if ($persist_error) {
+				$this->clear_last_error();
+			}
 			return $data;
 		}
 
@@ -191,13 +200,17 @@ final class GPW_GitHub_API {
 
 		if ($this->should_lockout_for_rate_limit($status_code, $response, $error_message)) {
 			$message = __('GitHub API rate limit reached. Requests are paused for one hour.', 'git-plugins-wordpress');
-			$this->set_last_error($message);
+			if ($persist_error) {
+				$this->set_last_error($message);
+			}
 			return new WP_Error('gpw_rate_limited', $message);
 		}
 
 		if (401 === $status_code) {
 			$message = __('GitHub authentication failed (401). Check your Personal Access Token.', 'git-plugins-wordpress');
-			$this->set_last_error($message);
+			if ($persist_error) {
+				$this->set_last_error($message);
+			}
 			return new WP_Error('gpw_unauthorized', $message);
 		}
 
@@ -205,17 +218,23 @@ final class GPW_GitHub_API {
 			$fallback_release = $this->get_latest_release_from_list($repo_full_name, $headers);
 			if (is_array($fallback_release)) {
 				GPW_Cache_Manager::set($cache_key, $fallback_release, 12 * HOUR_IN_SECONDS);
-				$this->clear_last_error();
+				if ($persist_error) {
+					$this->clear_last_error();
+				}
 				return $fallback_release;
 			}
 
 			if (is_wp_error($fallback_release)) {
-				$this->set_last_error($fallback_release->get_error_message());
+				if ($persist_error) {
+					$this->set_last_error($fallback_release->get_error_message());
+				}
 				return $fallback_release;
 			}
 
 			$message = __('Latest release not found (404). Ensure a published release exists. For private repositories, verify the PAT has repository read access.', 'git-plugins-wordpress');
-			$this->set_last_error($message);
+			if ($persist_error) {
+				$this->set_last_error($message);
+			}
 			return new WP_Error('gpw_release_not_found', $message);
 		}
 
@@ -225,7 +244,9 @@ final class GPW_GitHub_API {
 			$status_code,
 			$error_message
 		);
-		$this->set_last_error($message);
+		if ($persist_error) {
+			$this->set_last_error($message);
+		}
 
 		return new WP_Error('gpw_api_error', $message);
 	}

@@ -99,7 +99,7 @@ final class GPW_Update_Manager {
 				continue;
 			}
 
-			$release = $this->github_api->get_latest_release($repo_full_name);
+			$release = $this->github_api->get_latest_release($repo_full_name, false);
 			if (is_wp_error($release) || ! is_array($release)) {
 				continue;
 			}
@@ -167,7 +167,7 @@ final class GPW_Update_Manager {
 		}
 
 		$repo_full_name = $active_map[$slug];
-		$release        = $this->github_api->get_latest_release($repo_full_name);
+		$release        = $this->github_api->get_latest_release($repo_full_name, false);
 		if (is_wp_error($release) || ! is_array($release)) {
 			return false;
 		}
