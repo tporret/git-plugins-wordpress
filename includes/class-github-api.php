@@ -10,6 +10,8 @@ defined('ABSPATH') || exit;
 
 /**
  * Handles GitHub repository API calls and response caching.
+ *
+ * Supports multiple GitHub sources (user/org + optional PAT).
  */
 final class GPW_GitHub_API {
 	/**
@@ -50,7 +52,7 @@ final class GPW_GitHub_API {
 	private bool $is_rate_limited_in_request = false;
 
 	/**
-	 * Fetch repositories for a configured user/organization and filter by wp-plugin topic.
+	 * Fetch repositories for all configured sources, filtered by wp-plugin topic.
 	 *
 	 * @return array<int, array<string, mixed>>|WP_Error
 	 */
@@ -66,34 +68,52 @@ final class GPW_GitHub_API {
 			return $cached;
 		}
 
-		$settings = $this->get_settings();
-		$target   = $settings['github_target'];
-		$token    = $settings['github_pat'];
+		$sources = $this->get_sources();
 
-		if ('' === $target) {
-			$message = __('Please set a GitHub target name in Git Plugins settings.', 'git-plugins-wordpress');
+		if (empty($sources)) {
+			$message = __('Please add at least one GitHub source in Git Plugins settings.', 'git-plugins-wordpress');
 			$this->set_last_error($message);
 			return new WP_Error('gpw_missing_target', $message);
 		}
 
-		$org_response = $this->request_repositories($target, 'orgs', $token);
-		if (is_wp_error($org_response) && 'gpw_not_found' === $org_response->get_error_code()) {
-			$user_response = $this->request_repositories($target, 'users', $token);
-			if (is_wp_error($user_response)) {
-				$this->set_last_error($user_response->get_error_message());
-				return $user_response;
+		$all_repositories = array();
+		$errors           = array();
+
+		foreach ($sources as $source) {
+			$target = $source['target'];
+			$token  = $source['pat'];
+
+			$org_response = $this->request_repositories($target, 'orgs', $token);
+			if (is_wp_error($org_response) && 'gpw_not_found' === $org_response->get_error_code()) {
+				$user_response = $this->request_repositories($target, 'users', $token);
+				if (is_wp_error($user_response)) {
+					$errors[] = sprintf('%s: %s', $target, $user_response->get_error_message());
+					continue;
+				}
+				$repositories = $user_response;
+			} elseif (is_wp_error($org_response)) {
+				$errors[] = sprintf('%s: %s', $target, $org_response->get_error_message());
+				continue;
+			} else {
+				$repositories = $org_response;
 			}
-			$repositories = $user_response;
-		} elseif (is_wp_error($org_response)) {
-			$this->set_last_error($org_response->get_error_message());
-			return $org_response;
-		} else {
-			$repositories = $org_response;
+
+			foreach ($repositories as $repo) {
+				if (is_array($repo)) {
+					$all_repositories[] = $repo;
+				}
+			}
+		}
+
+		if (empty($all_repositories) && ! empty($errors)) {
+			$message = implode(' | ', $errors);
+			$this->set_last_error($message);
+			return new WP_Error('gpw_api_error', $message);
 		}
 
 		$filtered_repositories = array_values(
 			array_filter(
-				$repositories,
+				$all_repositories,
 				static function (array $repository): bool {
 					$topics = isset($repository['topics']) && is_array($repository['topics']) ? $repository['topics'] : array();
 					return in_array('wp-plugin', $topics, true);
@@ -101,10 +121,21 @@ final class GPW_GitHub_API {
 			)
 		);
 
-		GPW_Cache_Manager::set(self::REPOSITORY_CACHE_KEY, $filtered_repositories, 12 * HOUR_IN_SECONDS);
+		// Deduplicate by full_name (in case the same repo appears under multiple sources).
+		$seen = array();
+		$unique = array();
+		foreach ($filtered_repositories as $repo) {
+			$full_name = isset($repo['full_name']) ? (string) $repo['full_name'] : '';
+			if ('' !== $full_name && ! isset($seen[$full_name])) {
+				$seen[$full_name] = true;
+				$unique[] = $repo;
+			}
+		}
+
+		GPW_Cache_Manager::set(self::REPOSITORY_CACHE_KEY, $unique, 12 * HOUR_IN_SECONDS);
 		$this->clear_last_error();
 
-		return $filtered_repositories;
+		return $unique;
 	}
 
 	/**
@@ -150,15 +181,15 @@ final class GPW_GitHub_API {
 			return $cached;
 		}
 
-		$settings = $this->get_settings();
-		$headers  = array(
+		$token   = $this->get_token_for_repo($repo_full_name);
+		$headers = array(
 			'Accept'               => 'application/vnd.github+json',
 			'User-Agent'           => 'git-plugins-wordpress',
 			'X-GitHub-Api-Version' => '2022-11-28',
 		);
 
-		if ('' !== $settings['github_pat']) {
-			$headers['Authorization'] = 'Bearer ' . $settings['github_pat'];
+		if ('' !== $token) {
+			$headers['Authorization'] = 'Bearer ' . $token;
 		}
 
 		$url = sprintf('%1$s/repos/%2$s/releases/latest', self::API_BASE, $this->encode_repo_full_name($repo_full_name));
@@ -254,9 +285,6 @@ final class GPW_GitHub_API {
 	/**
 	 * Fallback release lookup using the releases list endpoint.
 	 *
-	 * This handles repositories where /releases/latest returns 404, such as
-	 * prerelease-only repositories.
-	 *
 	 * @param string               $repo_full_name Repository full name (owner/repo).
 	 * @param array<string, mixed> $headers        HTTP headers.
 	 *
@@ -344,13 +372,34 @@ final class GPW_GitHub_API {
 	}
 
 	/**
-	 * Get configured GitHub Personal Access Token.
+	 * Get configured GitHub Personal Access Token for a given repository.
+	 *
+	 * Matches the repo owner against configured sources to find the right PAT.
+	 *
+	 * @param string $repo_full_name Repository full name (owner/repo).
+	 *
+	 * @return string
+	 */
+	public function get_auth_token_for_repo(string $repo_full_name): string {
+		return $this->get_token_for_repo($repo_full_name);
+	}
+
+	/**
+	 * Get the first available auth token across all sources.
+	 *
+	 * @deprecated Use get_auth_token_for_repo() for per-repo token resolution.
 	 *
 	 * @return string
 	 */
 	public function get_auth_token(): string {
-		$settings = $this->get_settings();
-		return $settings['github_pat'];
+		$sources = $this->get_sources();
+		foreach ($sources as $source) {
+			if ('' !== $source['pat']) {
+				return $source['pat'];
+			}
+		}
+
+		return '';
 	}
 
 	/**
@@ -467,20 +516,67 @@ final class GPW_GitHub_API {
 	}
 
 	/**
-	 * Get settings with defaults.
+	 * Get configured sources from settings with backward-compatible migration.
 	 *
-	 * @return array<string, string>
+	 * @return array<int, array{target: string, pat: string}>
 	 */
-	private function get_settings(): array {
+	private function get_sources(): array {
 		$settings = get_option(self::OPTION_NAME, array());
 		if (! is_array($settings)) {
 			$settings = array();
 		}
 
-		return array(
-			'github_target' => isset($settings['github_target']) ? sanitize_text_field((string) $settings['github_target']) : '',
-			'github_pat'    => isset($settings['github_pat']) ? sanitize_text_field((string) $settings['github_pat']) : '',
-		);
+		if (isset($settings['sources']) && is_array($settings['sources'])) {
+			$sources = array();
+			foreach ($settings['sources'] as $source) {
+				if (! is_array($source)) {
+					continue;
+				}
+				$target = isset($source['target']) ? sanitize_text_field((string) $source['target']) : '';
+				$pat    = isset($source['pat']) ? sanitize_text_field((string) $source['pat']) : '';
+				if ('' !== $target) {
+					$sources[] = array('target' => $target, 'pat' => $pat);
+				}
+			}
+			return $sources;
+		}
+
+		// Legacy single-source migration.
+		$legacy_target = isset($settings['github_target']) ? sanitize_text_field((string) $settings['github_target']) : '';
+		$legacy_pat    = isset($settings['github_pat']) ? sanitize_text_field((string) $settings['github_pat']) : '';
+
+		if ('' !== $legacy_target) {
+			return array(
+				array('target' => $legacy_target, 'pat' => $legacy_pat),
+			);
+		}
+
+		return array();
+	}
+
+	/**
+	 * Resolve the PAT token for a given repository by matching owner.
+	 *
+	 * @param string $repo_full_name Repository full name (owner/repo).
+	 *
+	 * @return string
+	 */
+	private function get_token_for_repo(string $repo_full_name): string {
+		$parts = explode('/', $repo_full_name, 2);
+		$owner = isset($parts[0]) ? strtolower(trim($parts[0])) : '';
+
+		if ('' === $owner) {
+			return '';
+		}
+
+		$sources = $this->get_sources();
+		foreach ($sources as $source) {
+			if (strtolower($source['target']) === $owner && '' !== $source['pat']) {
+				return $source['pat'];
+			}
+		}
+
+		return '';
 	}
 
 	/**
@@ -546,8 +642,6 @@ final class GPW_GitHub_API {
 	 * Determine whether the API should be considered rate limited.
 	 *
 	 * @return bool
-	 *
-	 * @phpstan-return bool
 	 */
 	private function is_rate_limited(): bool {
 		if ($this->is_rate_limited_in_request) {

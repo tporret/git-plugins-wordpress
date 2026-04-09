@@ -114,7 +114,7 @@ final class GPW_Update_Manager {
 				continue;
 			}
 
-			$package_url = $this->has_valid_zip_asset($release);
+			$package_url = $this->has_valid_zip_asset($release, $repo_full_name);
 			if (! is_string($package_url) || '' === $package_url) {
 				continue;
 			}
@@ -172,7 +172,7 @@ final class GPW_Update_Manager {
 			return false;
 		}
 
-		$zip_url = $this->has_valid_zip_asset($release);
+		$zip_url = $this->has_valid_zip_asset($release, $repo_full_name);
 		if (! is_string($zip_url) || '' === $zip_url) {
 			return false;
 		}
@@ -211,26 +211,33 @@ final class GPW_Update_Manager {
 	/**
 	 * Inject authentication headers for GitHub package downloads.
 	 *
+	 * Extracts the repository owner/repo from the URL to resolve the correct token.
+	 *
 	 * @param array<string, mixed> $args Request args.
 	 * @param string               $url  Request URL.
 	 *
 	 * @return array<string, mixed>
 	 */
 	public function inject_github_download_auth(array $args, string $url): array {
-		$token = $this->github_api->get_auth_token();
-		if ('' === $token) {
-			return $args;
-		}
-
 		$host = wp_parse_url($url, PHP_URL_HOST);
 		if (! is_string($host)) {
 			return $args;
 		}
 
 		$host          = strtolower($host);
-		$is_github_api = 'api.github.com' === $host;
-		$is_asset_url  = str_contains($url, '/releases/assets/') || str_contains($url, 'objects.githubusercontent.com') || str_contains($url, 'github.com') || str_contains($url, 'codeload.github.com');
-		if (! $is_github_api && ! $is_asset_url) {
+		$is_api_asset_download = 'api.github.com' === $host && str_contains($url, '/releases/assets/');
+		$is_github_binary_host = in_array($host, array('github.com', 'objects.githubusercontent.com', 'codeload.github.com'), true);
+		if (! $is_api_asset_download && ! $is_github_binary_host) {
+			return $args;
+		}
+
+		$repo_full_name = $this->extract_repo_from_url($url);
+		if ('' === $repo_full_name) {
+			return $args;
+		}
+
+		$token = $this->github_api->get_auth_token_for_repo($repo_full_name);
+		if ('' === $token) {
 			return $args;
 		}
 
@@ -239,7 +246,10 @@ final class GPW_Update_Manager {
 		}
 
 		$args['headers']['Authorization'] = 'Bearer ' . $token;
-		$args['headers']['Accept']        = 'application/octet-stream';
+
+		if ($is_api_asset_download) {
+			$args['headers']['Accept'] = 'application/octet-stream';
+		}
 
 		return $args;
 	}
@@ -372,7 +382,7 @@ final class GPW_Update_Manager {
 			'X-GitHub-Api-Version' => '2022-11-28',
 		);
 
-		$token = $this->github_api->get_auth_token();
+		$token = $this->github_api->get_auth_token_for_repo($repo_full_name);
 		if ('' !== $token) {
 			$headers['Authorization'] = 'Bearer ' . $token;
 		}
@@ -430,29 +440,64 @@ final class GPW_Update_Manager {
 	}
 
 	/**
-	 * Validate release assets and return installable zip API URL.
+	 * Extract owner/repo from a GitHub URL.
 	 *
-	 * @param array<string, mixed> $release_data Release payload.
+	 * Handles api.github.com/repos/{owner}/{repo}/... and github.com/{owner}/{repo}/... patterns.
+	 *
+	 * @param string $url GitHub URL.
+	 *
+	 * @return string Repository full name (owner/repo) or empty string.
+	 */
+	private function extract_repo_from_url(string $url): string {
+		$path = wp_parse_url($url, PHP_URL_PATH);
+		if (! is_string($path)) {
+			return '';
+		}
+
+		// api.github.com/repos/{owner}/{repo}/...
+		if (preg_match('#^/repos/([^/]+/[^/]+)#', $path, $matches)) {
+			return $matches[1];
+		}
+
+		// github.com/{owner}/{repo}/... or objects.githubusercontent.com/{owner}/{repo}/...
+		if (preg_match('#^/([^/]+/[^/]+)#', $path, $matches)) {
+			return $matches[1];
+		}
+
+		return '';
+	}
+
+	/**
+	 * Validate release assets and return installable zip URL.
+	 *
+	 * @param array<string, mixed> $release_data   Release payload.
+	 * @param string               $repo_full_name Repository full name (owner/repo).
 	 *
 	 * @return string|bool
 	 */
-	private function has_valid_zip_asset(array $release_data): string|bool {
+	private function has_valid_zip_asset(array $release_data, string $repo_full_name = ''): string|bool {
 		if (! isset($release_data['assets']) || ! is_array($release_data['assets'])) {
 			error_log('Git Plugins WordPress: release has no assets array.');
 			return false;
 		}
+
+		$has_token = '' !== $this->github_api->get_auth_token_for_repo($repo_full_name);
 
 		foreach ($release_data['assets'] as $asset) {
 			if (! is_array($asset)) {
 				continue;
 			}
 
-			$asset_name = isset($asset['name']) ? sanitize_file_name((string) $asset['name']) : '';
-			$content_type = isset($asset['content_type']) ? sanitize_text_field((string) $asset['content_type']) : '';
-			$asset_url = isset($asset['url']) ? esc_url_raw((string) $asset['url']) : '';
+			$asset_name     = isset($asset['name']) ? sanitize_file_name((string) $asset['name']) : '';
+			$content_type   = isset($asset['content_type']) ? sanitize_text_field((string) $asset['content_type']) : '';
+			$api_url        = isset($asset['url']) ? esc_url_raw((string) $asset['url']) : '';
+			$browser_url    = isset($asset['browser_download_url']) ? esc_url_raw((string) $asset['browser_download_url']) : '';
+			$preferred_url  = $has_token ? $api_url : $browser_url;
+			$fallback_url   = $has_token ? $browser_url : $api_url;
+			$resolved_url   = '' !== $preferred_url ? $preferred_url : $fallback_url;
 
-			if ('application/zip' === strtolower($content_type) && '' !== $asset_name && str_ends_with(strtolower($asset_name), '.zip') && '' !== $asset_url) {
-				return $asset_url;
+			if ('application/zip' === strtolower($content_type) && '' !== $asset_name && str_ends_with(strtolower($asset_name), '.zip') && '' !== $resolved_url) {
+				return $resolved_url;
 			}
 		}
 

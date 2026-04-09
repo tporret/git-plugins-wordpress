@@ -77,7 +77,7 @@ final class GPW_Plugin_Installer {
 			$this->redirect_with_error($release->get_error_message());
 		}
 
-		$download_url = $this->extract_zip_download_url($release);
+		$download_url = $this->extract_zip_download_url($release, $repo_full_name);
 		if ('' === $download_url) {
 			$this->redirect_with_error(__('No .zip asset found in the latest GitHub release.', 'git-plugins-wordpress'));
 		}
@@ -86,7 +86,7 @@ final class GPW_Plugin_Installer {
 		require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
 		require_once ABSPATH . 'wp-admin/includes/file.php';
 
-		$this->download_token = $this->github_api->get_auth_token();
+		$this->download_token = $this->github_api->get_auth_token_for_repo($repo_full_name);
 		add_filter('http_request_args', array($this, 'inject_github_auth_header'), 10, 2);
 
 		$skin     = new Automatic_Upgrader_Skin();
@@ -237,12 +237,21 @@ final class GPW_Plugin_Installer {
 			return $args;
 		}
 
+		$is_api_asset_download = 'api.github.com' === strtolower($host) && str_contains($url, '/releases/assets/');
+		$is_github_binary_host = in_array(strtolower($host), array('github.com', 'objects.githubusercontent.com', 'codeload.github.com'), true);
+		if (! $is_api_asset_download && ! $is_github_binary_host) {
+			return $args;
+		}
+
 		if (! isset($args['headers']) || ! is_array($args['headers'])) {
 			$args['headers'] = array();
 		}
 
 		$args['headers']['Authorization'] = 'Bearer ' . $this->download_token;
-		$args['headers']['Accept']        = 'application/octet-stream';
+
+		if ($is_api_asset_download) {
+			$args['headers']['Accept'] = 'application/octet-stream';
+		}
 
 		return $args;
 	}
@@ -250,29 +259,41 @@ final class GPW_Plugin_Installer {
 	/**
 	 * Get first zip download URL from release assets.
 	 *
-	 * @param array<string, mixed> $release Release data.
+	 * @param array<string, mixed> $release        Release data.
+	 * @param string               $repo_full_name Repository full name (owner/repo).
 	 *
 	 * @return string
 	 */
-	private function extract_zip_download_url(array $release): string {
+	private function extract_zip_download_url(array $release, string $repo_full_name): string {
 		if (! isset($release['assets']) || ! is_array($release['assets'])) {
 			return '';
 		}
+
+		$has_token = '' !== $this->github_api->get_auth_token_for_repo($repo_full_name);
 
 		foreach ($release['assets'] as $asset) {
 			if (! is_array($asset)) {
 				continue;
 			}
 
-			$name = isset($asset['name']) ? sanitize_file_name((string) $asset['name']) : '';
-			$url  = isset($asset['url']) ? esc_url_raw((string) $asset['url']) : '';
+			$name             = isset($asset['name']) ? sanitize_file_name((string) $asset['name']) : '';
+			$api_url          = isset($asset['url']) ? esc_url_raw((string) $asset['url']) : '';
+			$browser_url      = isset($asset['browser_download_url']) ? esc_url_raw((string) $asset['browser_download_url']) : '';
+			$preferred_zip_url = $has_token ? $api_url : $browser_url;
+			$fallback_zip_url  = $has_token ? $browser_url : $api_url;
 
-			if ('' === $name || '' === $url) {
+			if ('' === $name) {
 				continue;
 			}
 
 			if (str_ends_with(strtolower($name), '.zip')) {
-				return $url;
+				if ('' !== $preferred_zip_url) {
+					return $preferred_zip_url;
+				}
+
+				if ('' !== $fallback_zip_url) {
+					return $fallback_zip_url;
+				}
 			}
 		}
 
