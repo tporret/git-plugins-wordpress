@@ -19,6 +19,12 @@ jobs:
   build-release-asset:
     runs-on: ubuntu-latest
 
+    env:
+      TAG_NAME: ''
+      PLUGIN_SLUG: ''
+      ASSET_NAME: ''
+      MAIN_PLUGIN_FILE: ''
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
