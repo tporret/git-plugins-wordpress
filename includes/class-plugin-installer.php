@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * Plugin installation handler for Git Plugins WordPress.
+ * Plugin installation handler for Git Repos Manager.
  *
  * @package GitPluginsWordPress
  */

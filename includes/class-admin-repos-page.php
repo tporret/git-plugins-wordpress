@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * Admin repository list page for Git Plugins WordPress.
+ * Admin repository list page for Git Repos Manager.
  *
  * @package GitPluginsWordPress
  */
@@ -81,7 +81,8 @@ final class GPW_Admin_Repos_Page {
 
 		check_admin_referer('gpw_save_active_repos_action', 'gpw_save_active_repos_nonce');
 
-		$submitted_repos = isset($_POST['active_repos']) ? wp_unslash((array) $_POST['active_repos']) : array();
+		$submitted_raw   = filter_input(INPUT_POST, 'active_repos', FILTER_DEFAULT, FILTER_REQUIRE_ARRAY);
+		$submitted_repos = is_array($submitted_raw) ? wp_unslash($submitted_raw) : array();
 		$sanitized_repos = array();
 
 		foreach ($submitted_repos as $repo_full_name) {
@@ -231,7 +232,8 @@ final class GPW_Admin_Repos_Page {
 	 * @return void
 	 */
 	private function register_page_notices(): void {
-		$notice = isset($_GET['gpw_notice']) ? sanitize_text_field(wp_unslash((string) $_GET['gpw_notice'])) : '';
+		$notice_raw = filter_input(INPUT_GET, 'gpw_notice', FILTER_UNSAFE_RAW);
+		$notice     = is_string($notice_raw) ? sanitize_text_field(wp_unslash($notice_raw)) : '';
 
 		if ('active-saved' === $notice) {
 			add_settings_error(
@@ -252,7 +254,8 @@ final class GPW_Admin_Repos_Page {
 		}
 
 		if ('install-failed' === $notice) {
-			$message = isset($_GET['message']) ? sanitize_text_field(wp_unslash((string) $_GET['message'])) : __('Plugin installation failed.', 'git-plugins-wordpress');
+			$message_raw = filter_input(INPUT_GET, 'message', FILTER_UNSAFE_RAW);
+			$message     = is_string($message_raw) ? sanitize_text_field(wp_unslash($message_raw)) : __('Plugin installation failed.', 'git-plugins-wordpress');
 			add_settings_error(
 				'gpw_messages',
 				'gpw_install_failed',
@@ -271,7 +274,8 @@ final class GPW_Admin_Repos_Page {
 		}
 
 		if ('uninstall-failed' === $notice) {
-			$message = isset($_GET['message']) ? sanitize_text_field(wp_unslash((string) $_GET['message'])) : __('Plugin uninstall failed.', 'git-plugins-wordpress');
+			$message_raw = filter_input(INPUT_GET, 'message', FILTER_UNSAFE_RAW);
+			$message     = is_string($message_raw) ? sanitize_text_field(wp_unslash($message_raw)) : __('Plugin uninstall failed.', 'git-plugins-wordpress');
 			add_settings_error(
 				'gpw_messages',
 				'gpw_uninstall_failed',

@@ -674,8 +674,6 @@ final class GPW_GitHub_API {
 		if (429 === $status_code || (403 === $status_code && ('0' === $remaining || $is_rate_error))) {
 			$this->is_rate_limited_in_request = true;
 			GPW_Cache_Manager::set(self::RATE_LIMIT_LOCKOUT_KEY, 1, HOUR_IN_SECONDS);
-
-			error_log('Git Plugins WordPress: GitHub API rate limited; lockout enabled for 1 hour.');
 			return true;
 		}
 

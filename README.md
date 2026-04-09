@@ -1,4 +1,4 @@
-# Git Plugins WordPress
+# Git Repos Manager
 
 Connect GitHub repositories and distribute WordPress plugins through GitHub Release ZIP assets.
 

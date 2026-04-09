@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * Cache manager for Git Plugins WordPress.
+ * Cache manager for Git Repos Manager.
  *
  * @package GitPluginsWordPress
  */
@@ -88,6 +88,7 @@ final class GPW_Cache_Manager {
 		$like_value    = $wpdb->esc_like('_transient_' . self::PREFIX) . '%';
 		$timeout_like  = $wpdb->esc_like('_transient_timeout_' . self::PREFIX) . '%';
 
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Bulk deletion by transient prefix requires direct query against options table.
 		$deleted_main = $wpdb->query(
 			$wpdb->prepare(
 				"DELETE FROM {$options_table} WHERE option_name LIKE %s",
@@ -95,6 +96,7 @@ final class GPW_Cache_Manager {
 			)
 		);
 
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Bulk deletion by transient prefix requires direct query against options table.
 		$deleted_timeouts = $wpdb->query(
 			$wpdb->prepare(
 				"DELETE FROM {$options_table} WHERE option_name LIKE %s",

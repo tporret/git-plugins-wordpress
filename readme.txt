@@ -1,4 +1,4 @@
-=== Git Plugins WordPress ===
+=== Git Repos Manager ===
 Contributors: tporret
 Donate link: http://porretto.com/donate
 Tags: github, plugin-updates, deployment
@@ -13,7 +13,7 @@ Connect GitHub repositories and distribute WordPress plugins via GitHub Release 
 
 == Description ==
 
-Git Plugins WordPress lets administrators discover, install, and update WordPress plugins hosted in GitHub repositories.
+Git Repos Manager lets administrators discover, install, and update WordPress plugins hosted in GitHub repositories.
 
 To appear in the Available Plugins screen, a repository must:
 - Include the GitHub repository topic `wp-plugin`

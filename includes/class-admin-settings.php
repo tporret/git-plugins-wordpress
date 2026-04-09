@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 /**
- * Admin settings for Git Plugins WordPress.
+ * Admin settings for Git Repos Manager.
  *
  * @package GitPluginsWordPress
  */
@@ -213,23 +213,27 @@ final class GPW_Admin_Settings {
 		?>
 		<div id="gpw-sources-wrapper">
 			<?php foreach ($sources as $index => $source) : ?>
+				<?php
+				$source_index  = (int) $index;
+				$source_target = isset($source['target']) ? (string) $source['target'] : '';
+				$source_pat    = isset($source['pat']) ? (string) $source['pat'] : '';
+				$source_label  = sprintf(
+					/* translators: %d: source number */
+					__('Source #%d', 'git-plugins-wordpress'),
+					$source_index + 1
+				);
+				?>
 				<fieldset class="gpw-source-row" style="border:1px solid #ccd0d4;padding:12px 16px;margin-bottom:12px;background:#f9f9f9;">
 					<legend style="font-weight:600;">
-						<?php
-						printf(
-							/* translators: %d: source number */
-							esc_html__('Source #%d', 'git-plugins-wordpress'),
-							$index + 1
-						);
-						?>
+						<?php echo esc_html($source_label); ?>
 					</legend>
 					<p>
 						<label>
 							<?php echo esc_html__('GitHub Target Name', 'git-plugins-wordpress'); ?><br/>
 							<input
 								type="text"
-								name="<?php echo esc_attr(self::OPTION_NAME); ?>[sources][<?php echo (int) $index; ?>][target]"
-								value="<?php echo esc_attr($source['target']); ?>"
+								name="<?php echo esc_attr(self::OPTION_NAME); ?>[sources][<?php echo esc_attr((string) $source_index); ?>][target]"
+								value="<?php echo esc_attr($source_target); ?>"
 								class="regular-text"
 								placeholder="octocat"
 							/>
@@ -241,8 +245,8 @@ final class GPW_Admin_Settings {
 							<?php echo esc_html__('Personal Access Token (PAT)', 'git-plugins-wordpress'); ?><br/>
 							<input
 								type="password"
-								name="<?php echo esc_attr(self::OPTION_NAME); ?>[sources][<?php echo (int) $index; ?>][pat]"
-								value="<?php echo esc_attr($source['pat']); ?>"
+								name="<?php echo esc_attr(self::OPTION_NAME); ?>[sources][<?php echo esc_attr((string) $source_index); ?>][pat]"
+								value="<?php echo esc_attr($source_pat); ?>"
 								class="regular-text"
 								autocomplete="new-password"
 							/>
@@ -366,7 +370,10 @@ final class GPW_Admin_Settings {
 	 * @return void
 	 */
 	private function register_page_notices(): void {
-		if (isset($_GET['gpw_notice']) && 'force-check-updates' === sanitize_text_field(wp_unslash((string) $_GET['gpw_notice']))) {
+		$notice_raw = filter_input(INPUT_GET, 'gpw_notice', FILTER_UNSAFE_RAW);
+		$notice     = is_string($notice_raw) ? sanitize_text_field(wp_unslash($notice_raw)) : '';
+
+		if ('force-check-updates' === $notice) {
 			add_settings_error(
 				'gpw_messages',
 				'gpw_force_check_updates',
