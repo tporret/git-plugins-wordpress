@@ -3,7 +3,7 @@ declare(strict_types=1);
 /**
  * Plugin Name:       Git Repos Manager
  * Description:       Connect GitHub repositories and distribute WordPress extensions via Release assets.
- * Version:           1.0.2
+ * Version:           1.0.3
  * Author:            tporret
  * Plugin URI:        https://porretto.com/github-wordpress-plugin-manager/
  * Text Domain:       git-plugins-wordpress

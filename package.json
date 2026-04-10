@@ -1,6 +1,6 @@
 {
   "name": "git-plugins-wordpress",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Git Repos Manager – React admin UI",
   "scripts": {
