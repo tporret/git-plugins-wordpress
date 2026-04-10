@@ -1,2 +1,25 @@
 .docs/
 .github/
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/editor
+.idea/
+.vscode/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local env files
+.env
+.env.*
+
+# Build/cache artifacts
+.cache/
+coverage/

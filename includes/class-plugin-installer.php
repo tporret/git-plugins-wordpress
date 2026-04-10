@@ -20,7 +20,7 @@ final class GPW_Plugin_Installer {
 	/**
 	 * Redirect page slug after actions.
 	 */
-	private const REDIRECT_PAGE = 'gpw-available-plugins';
+	private const REDIRECT_PAGE = 'gpw-settings';
 
 	/**
 	 * GitHub API service.

@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Reset WP admin styles within our root */
+#gpw-react-root {
+  all: unset;
+  display: block;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  color: #1e293b;
+  -webkit-font-smoothing: antialiased;
+}
+
+#gpw-react-root *,
+#gpw-react-root *::before,
+#gpw-react-root *::after {
+  box-sizing: border-box;
+}

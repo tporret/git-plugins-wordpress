@@ -533,22 +533,16 @@ final class GPW_GitHub_API {
 					continue;
 				}
 				$target = isset($source['target']) ? sanitize_text_field((string) $source['target']) : '';
-				$pat    = isset($source['pat']) ? sanitize_text_field((string) $source['pat']) : '';
+				$pat    = isset($source['pat']) ? (string) $source['pat'] : '';
 				if ('' !== $target) {
+					// Decrypt PAT if encrypted.
+					if ('' !== $pat && GPW_Encryption::is_encrypted($pat)) {
+						$pat = GPW_Encryption::decrypt($pat);
+					}
 					$sources[] = array('target' => $target, 'pat' => $pat);
 				}
 			}
 			return $sources;
-		}
-
-		// Legacy single-source migration.
-		$legacy_target = isset($settings['github_target']) ? sanitize_text_field((string) $settings['github_target']) : '';
-		$legacy_pat    = isset($settings['github_pat']) ? sanitize_text_field((string) $settings['github_pat']) : '';
-
-		if ('' !== $legacy_target) {
-			return array(
-				array('target' => $legacy_target, 'pat' => $legacy_pat),
-			);
 		}
 
 		return array();

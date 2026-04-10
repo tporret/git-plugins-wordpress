@@ -1,0 +1,22 @@
+{
+  "name": "git-plugins-wordpress",
+  "version": "1.0.1",
+  "private": true,
+  "description": "Git Repos Manager – React admin UI",
+  "scripts": {
+    "build": "wp-scripts build",
+    "start": "wp-scripts start"
+  },
+  "devDependencies": {
+    "@wordpress/scripts": "^30.0.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "postcss-loader": "^8.1.1",
+    "tailwindcss": "^3.4.4"
+  },
+  "dependencies": {
+    "@wordpress/api-fetch": "^7.0.0",
+    "@wordpress/element": "^6.0.0",
+    "lucide-react": "^0.400.0"
+  }
+}

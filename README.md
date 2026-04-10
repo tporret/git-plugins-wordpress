@@ -4,12 +4,14 @@ Connect GitHub repositories and distribute WordPress plugins through GitHub Rele
 
 ## What It Does
 
-- Fetches repositories from a configured GitHub user or organization
+- Provides a modern React-based WordPress admin interface for source and plugin management
+- Fetches repositories from one or more configured GitHub users or organizations
 - Shows only repositories explicitly tagged with the `wp-plugin` topic
 - Lets admins mark repositories as Active for update tracking
 - Installs plugins using WordPress native upgrader APIs
 - Injects updates into WordPress core plugin update checks
 - Supports authenticated downloads for private repos via GitHub PAT
+- Exposes secured admin REST endpoints for settings, plugin actions, and cache refresh
 
 ## Repository Requirements
 
@@ -24,10 +26,24 @@ For a repo to appear and work correctly:
 
 1. Install and activate this plugin in WordPress
 2. Open **Git Plugins > Settings**
-3. Set **GitHub Target Name** (user or organization)
-4. Optionally set **GitHub Personal Access Token (PAT)**
-5. Open **Git Plugins > Available Plugins**
-6. Install plugins and mark desired repos as **Active** for update checks
+3. Add one or more **GitHub Sources** (target user/org + optional PAT)
+4. Save settings
+5. In **Available Plugins**, install plugins and toggle desired repos as **Active**
+6. Use **Force Refresh Cache** when you need a fresh GitHub pull immediately
+
+## Security and PAT Handling
+
+- PAT values are encrypted at rest using OpenSSL AES-256-GCM
+- PATs are never returned by the settings API; saved tokens are masked in UI
+- Saved PAT fields are locked in UI until explicitly cleared for replacement
+- REST endpoints require admin capabilities (`manage_options`, plus install/delete plugin capabilities where appropriate)
+- GitHub auth headers are only injected for approved GitHub hosts during download flows
+- Encryption key-rotation detection alerts admins if WordPress salts changed and PATs must be re-entered
+
+Recommended PAT permissions:
+
+- Fine-grained PAT: `Contents` read-only
+- Classic PAT: `public_repo` for public repos, or `repo` if private repos are needed
 
 ## Update Flow
 
@@ -39,12 +55,13 @@ For a repo to appear and work correctly:
 
 - API responses are cached to reduce calls
 - A lockout is applied when GitHub rate limiting is detected
-- The Settings page includes a force-check utility to flush cache and trigger fresh checks
+- The UI includes a **Refresh** action and **Force Refresh Cache** action to clear cached GitHub data and reload
 
 ## Development Notes
 
 - PHP 8.1+
 - WordPress 6.0+
+- React + Tailwind admin SPA built via `@wordpress/scripts`
 - Main entry point: `git-plugins-wordpress.php`
 - Core classes are in `includes/`
 
