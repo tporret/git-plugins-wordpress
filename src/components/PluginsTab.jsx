@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from '@wordpress/element';
-import { Download, Trash2, RefreshCw, Package } from 'lucide-react';
+import { Download, Trash2, RefreshCw, Package, ArrowUpCircle } from 'lucide-react';
 
 const API_URL = window.gpwSettings?.restUrl || '/wp-json/gpw/v1';
 const NONCE = window.gpwSettings?.nonce || '';
@@ -137,6 +137,29 @@ export default function PluginsTab() {
     }
   };
 
+  const handleUpdate = async (plugin) => {
+    const key = `update-${plugin.full_name}`;
+    setActionLoading((prev) => ({ ...prev, [key]: true }));
+    try {
+      const res = await fetch(`${API_URL}/plugins/update`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ full_name: plugin.full_name, plugin_file: plugin.plugin_file }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(data.message || 'Updated successfully.');
+        await fetchPlugins();
+      } else {
+        showToast(data.message || 'Update failed.', 'error');
+      }
+    } catch {
+      showToast('Network error.', 'error');
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
   const handleUninstall = async (plugin) => {
     if (!window.confirm(`Uninstall "${plugin.name}"? This will delete the plugin files.`)) {
       return;
@@ -249,9 +272,11 @@ export default function PluginsTab() {
               {plugins.map((plugin) => {
                 const installKey = `install-${plugin.full_name}`;
                 const uninstallKey = `uninstall-${plugin.full_name}`;
+                const updateKey = `update-${plugin.full_name}`;
                 const toggleKey = `toggle-${plugin.full_name}`;
                 const isInstalling = actionLoading[installKey];
                 const isUninstalling = actionLoading[uninstallKey];
+                const isUpdating = actionLoading[updateKey];
                 const isToggling = actionLoading[toggleKey];
 
                 return (
@@ -269,9 +294,16 @@ export default function PluginsTab() {
                     {/* Version badge */}
                     <td className="px-6 py-4">
                       {plugin.version ? (
-                        <span className="inline-block rounded bg-slate-100 px-2 py-1 font-mono text-xs text-slate-700">
-                          {plugin.version}
-                        </span>
+                        <div className="flex flex-col gap-1">
+                          <span className="inline-block rounded bg-slate-100 px-2 py-1 font-mono text-xs text-slate-700">
+                            {plugin.version}
+                          </span>
+                          {plugin.update_available && plugin.installed_version && (
+                            <span className="font-mono text-xs text-amber-600">
+                              installed: {plugin.installed_version}
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-xs text-slate-400">—</span>
                       )}
@@ -298,19 +330,36 @@ export default function PluginsTab() {
                     {/* Action */}
                     <td className="px-6 py-4 text-right">
                       {plugin.is_installed ? (
-                        <button
-                          type="button"
-                          onClick={() => handleUninstall(plugin)}
-                          disabled={isUninstalling}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
-                        >
-                          {isUninstalling ? (
-                            <RefreshCw size={13} className="animate-spin" />
-                          ) : (
-                            <Trash2 size={13} />
+                        <div className="inline-flex items-center gap-2">
+                          {plugin.update_available && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdate(plugin)}
+                              disabled={isUpdating || isUninstalling}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 transition hover:bg-amber-100 disabled:opacity-50"
+                            >
+                              {isUpdating ? (
+                                <RefreshCw size={13} className="animate-spin" />
+                              ) : (
+                                <ArrowUpCircle size={13} />
+                              )}
+                              {isUpdating ? 'Updating…' : 'Update'}
+                            </button>
                           )}
-                          {isUninstalling ? 'Removing…' : 'Uninstall'}
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUninstall(plugin)}
+                            disabled={isUninstalling || isUpdating}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                          >
+                            {isUninstalling ? (
+                              <RefreshCw size={13} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={13} />
+                            )}
+                            {isUninstalling ? 'Removing…' : 'Uninstall'}
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"

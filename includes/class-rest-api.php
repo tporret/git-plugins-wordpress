@@ -95,6 +95,12 @@ final class GPW_REST_API {
 			'permission_callback' => array($this, 'check_admin_permission'),
 		));
 
+		register_rest_route(self::NAMESPACE, '/plugins/update', array(
+			'methods'             => WP_REST_Server::CREATABLE,
+			'callback'            => array($this, 'update_plugin'),
+			'permission_callback' => array($this, 'check_admin_permission'),
+		));
+
 		register_rest_route(self::NAMESPACE, '/cache/flush', array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => array($this, 'flush_cache'),
@@ -289,19 +295,30 @@ final class GPW_REST_API {
 				? ''
 				: (isset($release['tag_name']) ? sanitize_text_field((string) $release['tag_name']) : '');
 
-			$plugin_file  = $installed_dirs[strtolower($repo_name)] ?? '';
-			$is_installed = '' !== $plugin_file;
-			$is_active    = in_array($repo_full_name, $active_repos, true)
+			$plugin_file       = $installed_dirs[strtolower($repo_name)] ?? '';
+			$is_installed      = '' !== $plugin_file;
+			$is_active         = in_array($repo_full_name, $active_repos, true)
 				|| ($is_installed && is_plugin_active($plugin_file));
 
+			$installed_version = $is_installed
+				? sanitize_text_field((string) ($installed_plugins[$plugin_file]['Version'] ?? ''))
+				: '';
+			$github_version    = ltrim($version, 'vV');
+			$update_available  = $is_installed
+				&& '' !== $installed_version
+				&& '' !== $github_version
+				&& version_compare($installed_version, $github_version, '<');
+
 			$result[] = array(
-				'name'         => $repo_name,
-				'full_name'    => $repo_full_name,
-				'description'  => $description,
-				'version'      => $version,
-				'is_installed' => $is_installed,
-				'is_active'    => $is_active,
-				'plugin_file'  => $plugin_file,
+				'name'              => $repo_name,
+				'full_name'         => $repo_full_name,
+				'description'       => $description,
+				'version'           => $version,
+				'installed_version' => $installed_version,
+				'is_installed'      => $is_installed,
+				'is_active'         => $is_active,
+				'update_available'  => $update_available,
+				'plugin_file'       => $plugin_file,
 			);
 		}
 
@@ -497,6 +514,113 @@ final class GPW_REST_API {
 		update_option(self::ACTIVE_REPOS_OPTION, $active_repos, false);
 
 		return new WP_REST_Response(array('message' => __('Plugin uninstalled successfully.', 'git-plugins-wordpress')), 200);
+	}
+
+	/**
+	 * POST /plugins/update — Update an installed plugin to the latest GitHub release.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function update_plugin(WP_REST_Request $request): WP_REST_Response {
+		if (! current_user_can('update_plugins')) {
+			return new WP_REST_Response(
+				array('message' => __('You do not have permission to update plugins.', 'git-plugins-wordpress')),
+				403
+			);
+		}
+
+		$repo_full_name = sanitize_text_field((string) $request->get_param('full_name'));
+		$plugin_file    = sanitize_text_field((string) $request->get_param('plugin_file'));
+
+		if ('' === $repo_full_name || '' === $plugin_file) {
+			return new WP_REST_Response(
+				array('message' => __('Required parameters are missing.', 'git-plugins-wordpress')),
+				400
+			);
+		}
+
+		if (! function_exists('get_plugins')) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		if (! array_key_exists($plugin_file, get_plugins())) {
+			return new WP_REST_Response(
+				array('message' => __('Plugin is not installed.', 'git-plugins-wordpress')),
+				404
+			);
+		}
+
+		$release = $this->github_api->get_latest_release($repo_full_name);
+		if (is_wp_error($release)) {
+			return new WP_REST_Response(
+				array('message' => $release->get_error_message()),
+				422
+			);
+		}
+
+		$download_url = $this->extract_zip_url($release, $repo_full_name);
+		if ('' === $download_url) {
+			return new WP_REST_Response(
+				array('message' => __('No .zip asset found in the latest GitHub release.', 'git-plugins-wordpress')),
+				422
+			);
+		}
+
+		require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+		require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
+		require_once ABSPATH . 'wp-admin/includes/file.php';
+
+		$token = $this->github_api->get_auth_token_for_repo($repo_full_name);
+
+		$auth_filter = null;
+		if ('' !== $token) {
+			$allowed_hosts = array(
+				'api.github.com',
+				'github.com',
+				'objects.githubusercontent.com',
+				'codeload.github.com',
+			);
+			$auth_filter = function (array $args, string $url) use ($token, $allowed_hosts): array {
+				$host = wp_parse_url($url, PHP_URL_HOST);
+				if (! is_string($host) || ! in_array(strtolower($host), $allowed_hosts, true)) {
+					return $args;
+				}
+				if (! isset($args['headers']) || ! is_array($args['headers'])) {
+					$args['headers'] = array();
+				}
+				$args['headers']['Authorization'] = 'Bearer ' . $token;
+				if ('api.github.com' === strtolower($host) && str_contains($url, '/releases/assets/')) {
+					$args['headers']['Accept'] = 'application/octet-stream';
+				}
+				return $args;
+			};
+			add_filter('http_request_args', $auth_filter, 10, 2);
+		}
+
+		$skin     = new Automatic_Upgrader_Skin();
+		$upgrader = new Plugin_Upgrader($skin);
+		$result   = $upgrader->install($download_url);
+
+		if (null !== $auth_filter) {
+			remove_filter('http_request_args', $auth_filter, 10);
+		}
+
+		if (is_wp_error($result)) {
+			return new WP_REST_Response(array('message' => $result->get_error_message()), 422);
+		}
+
+		if (! $result) {
+			return new WP_REST_Response(
+				array('message' => __('Plugin update failed.', 'git-plugins-wordpress')),
+				422
+			);
+		}
+
+		wp_clean_plugins_cache(true);
+
+		return new WP_REST_Response(array('message' => __('Plugin updated successfully.', 'git-plugins-wordpress')), 200);
 	}
 
 	/**
