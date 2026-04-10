@@ -7,6 +7,11 @@ on:
     tags:
       - "*"
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing release tag to rebuild (example: v1.0.2)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -21,15 +26,40 @@ jobs:
 
     env:
       TAG_NAME: ''
+      CHECKOUT_REF: ''
       PLUGIN_SLUG: ''
       ASSET_NAME: ''
       MAIN_PLUGIN_FILE: ''
 
     steps:
+      - name: Resolve tag and checkout ref
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME="${{ github.event.inputs.tag_name }}"
+            TAG_NAME="${TAG_NAME#refs/tags/}"
+
+            if [ -z "${TAG_NAME}" ]; then
+              echo "::error::For manual runs, provide tag_name (for example: v1.0.2)."
+              exit 1
+            fi
+
+            CHECKOUT_REF="refs/tags/${TAG_NAME}"
+          else
+            TAG_NAME="${{ github.event.release.tag_name || github.ref_name }}"
+            CHECKOUT_REF="${{ github.ref }}"
+          fi
+
+          echo "TAG_NAME=${TAG_NAME}" >> "$GITHUB_ENV"
+          echo "CHECKOUT_REF=${CHECKOUT_REF}" >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ env.CHECKOUT_REF }}
 
       # ---------------------------------------------------------------
       # Point 5 — Plugin slug detection with override support.
@@ -60,8 +90,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          TAG_NAME="${{ github.event.release.tag_name || github.ref_name }}"
 
           # --- Resolve plugin slug ---
           PLUGIN_SLUG=""
