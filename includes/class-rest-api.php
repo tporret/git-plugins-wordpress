@@ -599,23 +599,41 @@ final class GPW_REST_API {
 			add_filter('http_request_args', $auth_filter, 10, 2);
 		}
 
+		// Deactivate plugin before overwriting to avoid fatal errors from partially-loaded files.
+		$was_active = is_plugin_active($plugin_file);
+		if ($was_active) {
+			deactivate_plugins($plugin_file, true);
+		}
+
 		$skin     = new Automatic_Upgrader_Skin();
 		$upgrader = new Plugin_Upgrader($skin);
-		$result   = $upgrader->install($download_url);
+		$result   = $upgrader->install($download_url, array('overwrite_package' => true));
 
 		if (null !== $auth_filter) {
 			remove_filter('http_request_args', $auth_filter, 10);
 		}
 
 		if (is_wp_error($result)) {
+			// Re-activate if we deactivated and the update failed.
+			if ($was_active) {
+				activate_plugin($plugin_file);
+			}
 			return new WP_REST_Response(array('message' => $result->get_error_message()), 422);
 		}
 
 		if (! $result) {
+			if ($was_active) {
+				activate_plugin($plugin_file);
+			}
 			return new WP_REST_Response(
 				array('message' => __('Plugin update failed.', 'git-plugins-wordpress')),
 				422
 			);
+		}
+
+		// Re-activate if it was active before the update.
+		if ($was_active) {
+			activate_plugin($plugin_file);
 		}
 
 		wp_clean_plugins_cache(true);
