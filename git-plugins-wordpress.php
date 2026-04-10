@@ -5,6 +5,7 @@ declare(strict_types=1);
  * Description:       Connect GitHub repositories and distribute WordPress extensions via Release assets.
  * Version:           1.0.1
  * Author:            tporret
+ * Plugin URI:        https://porretto.com/github-wordpress-plugin-manager/
  * Text Domain:       git-plugins-wordpress
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
