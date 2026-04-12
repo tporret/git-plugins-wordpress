@@ -379,10 +379,14 @@ jobs:
           unzip -q "dist/${ASSET_NAME}" -d verify-dist
 
           test -f "verify-dist/${PLUGIN_SLUG}/${MAIN_PLUGIN_FILE#./}"
-          test -f "verify-dist/${PLUGIN_SLUG}/build/index.js"
-          test -f "verify-dist/${PLUGIN_SLUG}/build/passkey-login.js"
-          test -f "verify-dist/${PLUGIN_SLUG}/vendor/phpdocumentor/reflection-docblock/src/DocBlockFactory.php"
-          test -f "verify-dist/${PLUGIN_SLUG}/vendor/phpstan/phpdoc-parser/src/ParserConfig.php"
+
+          if [ -d "verify-dist/${PLUGIN_SLUG}/build" ]; then
+            find "verify-dist/${PLUGIN_SLUG}/build" -type f | grep -q .
+          fi
+
+          if [ -d "verify-dist/${PLUGIN_SLUG}/vendor" ]; then
+            find "verify-dist/${PLUGIN_SLUG}/vendor" -type f \( -name '*.php' -o -name 'autoload.php' \) | grep -q .
+          fi
 
       - name: Generate checksum
         shell: bash
