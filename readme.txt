@@ -5,7 +5,7 @@ Tags: github, plugin-updates, deployment
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 8.1
-Stable tag: 1.0.3
+Stable tag: 1.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -80,6 +80,13 @@ Only `.zip` release assets with `application/zip` content type are accepted for 
 
 == Changelog ==
 
+= 1.1.0 =
+* Added multisite-aware network admin support with network-scoped settings, cache, and diagnostics.
+* Added a Sites summary column with lazy-loaded subsite activation details for multisite networks.
+* Clarified tracking versus activation state in the admin UI.
+* Improved multisite install, update, uninstall, and activation handling.
+* Updated documentation and release packaging rules.
+
 = 1.0.1 =
 * Security hardening for PAT handling and encryption workflows.
 * React admin workflow and documentation updates.
@@ -99,6 +106,9 @@ Only `.zip` release assets with `application/zip` content type are accepted for 
 * Hardened token header scoping and key-rotation detection.
 
 == Upgrade Notice ==
+
+= 1.1.0 =
+Multisite feature release with a network-managed admin UI, subsite visibility tools, and clearer plugin tracking states.
 
 = 1.0.1 =
 Security and reliability update with improved PAT handling and documentation.
