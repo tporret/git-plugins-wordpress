@@ -323,11 +323,16 @@ final class GPW_REST_API {
 			$plugin_file       = $installed_dirs[strtolower($repo_name)] ?? '';
 			$is_installed      = '' !== $plugin_file;
 			$is_tracked        = in_array($repo_full_name, $active_repos, true);
+			$is_network_active = $is_installed && is_multisite() && is_plugin_active_for_network($plugin_file);
 			$active_site_count = $is_installed && isset($site_activation_map[$plugin_file])
 				? (int) $site_activation_map[$plugin_file]
 				: 0;
-			$is_site_active    = $is_installed && $active_site_count > 0;
-			$is_network_active = $is_installed && is_multisite() && is_plugin_active_for_network($plugin_file);
+
+			if ($is_installed && ! is_multisite()) {
+				$active_site_count = is_plugin_active($plugin_file) ? 1 : 0;
+			}
+
+			$is_site_active = $is_installed && ! $is_network_active && $active_site_count > 0;
 			$sites_summary_label = $this->get_sites_summary_label(
 				$is_installed,
 				$is_network_active,

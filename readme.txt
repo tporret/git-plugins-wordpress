@@ -5,7 +5,7 @@ Tags: github, plugin-updates, deployment
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 8.1
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -80,6 +80,11 @@ Only `.zip` release assets with `application/zip` content type are accepted for 
 
 == Changelog ==
 
+= 1.1.1 =
+* Fixed single-site activation status so installed plugins correctly show when they are active.
+* Improved badge alignment in the Available Plugins table for tracking and activation states.
+* Fixed release workflow packaging verification so automated assets validate against this plugin's real runtime files.
+
 = 1.1.0 =
 * Added multisite-aware network admin support with network-scoped settings, cache, and diagnostics.
 * Added a Sites summary column with lazy-loaded subsite activation details for multisite networks.
@@ -106,6 +111,9 @@ Only `.zip` release assets with `application/zip` content type are accepted for 
 * Hardened token header scoping and key-rotation detection.
 
 == Upgrade Notice ==
+
+= 1.1.1 =
+Single-site status display fix plus release automation verification fixes.
 
 = 1.1.0 =
 Multisite feature release with a network-managed admin UI, subsite visibility tools, and clearer plugin tracking states.

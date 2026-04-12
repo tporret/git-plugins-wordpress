@@ -537,14 +537,14 @@ export default function PluginsTab() {
                     </td>
 
                     {/* Toggle */}
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 align-middle">
                       <div className="flex items-center gap-3">
                         <Toggle
                           checked={plugin.is_tracked}
                           disabled={isToggling}
                           onChange={() => handleToggle(plugin)}
                         />
-                        <div>
+                        <div className="flex flex-col justify-center">
                           <span
                             className={`text-xs font-medium ${
                               plugin.is_tracked ? 'text-emerald-600' : 'text-slate-400'
@@ -559,9 +559,9 @@ export default function PluginsTab() {
                       </div>
                     </td>
 
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 align-middle">
                       <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
+                        className={`inline-flex min-h-[44px] items-center rounded-full px-3 py-1 text-xs font-medium leading-5 ${
                           plugin.is_network_active
                             ? 'bg-sky-100 text-sky-700'
                             : plugin.is_site_active
@@ -582,10 +582,10 @@ export default function PluginsTab() {
                     </td>
 
                     {APP_CONTEXT.isMultisite && (
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 align-middle">
                         <div className="flex items-center gap-3">
                           <span
-                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
+                            className={`inline-flex min-h-[44px] items-center rounded-full px-3 py-1 text-xs font-medium leading-5 ${
                               plugin.is_network_active
                                 ? 'bg-sky-100 text-sky-700'
                                 : plugin.active_site_count > 0

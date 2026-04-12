@@ -629,6 +629,9 @@ video {
 .max-h-\[85vh\] {
   max-height: 85vh;
 }
+.min-h-\[44px\] {
+  min-height: 44px;
+}
 .min-h-screen {
   min-height: 100vh;
 }
@@ -954,6 +957,9 @@ video {
 .text-right {
   text-align: right;
 }
+.align-middle {
+  vertical-align: middle;
+}
 .font-mono {
   font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, monospace;
 }
@@ -988,6 +994,9 @@ video {
 }
 .uppercase {
   text-transform: uppercase;
+}
+.leading-5 {
+  line-height: 1.25rem;
 }
 .leading-6 {
   line-height: 1.5rem;
