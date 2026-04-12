@@ -3,6 +3,8 @@ import { Github, Settings } from 'lucide-react';
 import SourcesTab from './components/SourcesTab';
 import PluginsTab from './components/PluginsTab';
 
+const APP_CONTEXT = window.gpwSettings?.context || {};
+
 const TABS = [
   { id: 'sources', label: 'GitHub Sources', icon: Github },
   { id: 'plugins', label: 'Available Plugins', icon: Settings },
@@ -10,6 +12,8 @@ const TABS = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('sources');
+  const isMultisite = Boolean(APP_CONTEXT.isMultisite);
+  const scopeLabel = APP_CONTEXT.scope === 'network' ? 'Network' : 'Site';
 
   return (
     <div className="min-h-screen bg-slate-50 p-6">
@@ -20,9 +24,30 @@ export default function App() {
         </div>
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Git Plugins Manager</h1>
-          <p className="text-sm text-slate-500">Manage GitHub sources and distributed plugins</p>
+          <p className="text-sm text-slate-500">{scopeLabel} GitHub source and plugin management</p>
         </div>
       </div>
+
+      {isMultisite && (
+        <div className="mb-6 rounded-2xl border border-sky-200 bg-[linear-gradient(135deg,#f0f9ff_0%,#ecfeff_100%)] p-5 shadow-sm">
+          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-sky-700">
+                Network Mode
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">
+                GitHub sources, encrypted tokens, tracked repositories, and cache are shared across
+                the network. Plugin activation still follows normal WordPress rules, so a plugin
+                may be installed here while being inactive, site active, or network active.
+              </p>
+            </div>
+            <div className="rounded-xl border border-white/70 bg-white/70 px-4 py-3 text-sm text-slate-600">
+              <div className="font-medium text-slate-900">Admin surface</div>
+              <div>{APP_CONTEXT.isNetworkAdmin ? 'Network Admin' : 'Site Admin'}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tab navigation */}
       <div className="mb-6 flex gap-1 rounded-lg bg-slate-100 p-1 w-fit">

@@ -37,6 +37,10 @@ final class GPW_Cache_Manager {
 			$expiration = 43200;
 		}
 
+		if (GPW_Context::uses_network_scope()) {
+			return (bool) set_site_transient($cache_key, $data, $expiration);
+		}
+
 		return (bool) set_transient($cache_key, $data, $expiration);
 	}
 
@@ -51,6 +55,10 @@ final class GPW_Cache_Manager {
 		$cache_key = self::build_key($key);
 		if ('' === $cache_key) {
 			return false;
+		}
+
+		if (GPW_Context::uses_network_scope()) {
+			return get_site_transient($cache_key);
 		}
 
 		return get_transient($cache_key);
@@ -69,6 +77,10 @@ final class GPW_Cache_Manager {
 			return false;
 		}
 
+		if (GPW_Context::uses_network_scope()) {
+			return (bool) delete_site_transient($cache_key);
+		}
+
 		return (bool) delete_transient($cache_key);
 	}
 
@@ -82,6 +94,30 @@ final class GPW_Cache_Manager {
 
 		if (! isset($wpdb) || ! ($wpdb instanceof wpdb)) {
 			return 0;
+		}
+
+		if (GPW_Context::uses_network_scope()) {
+			$meta_table   = $wpdb->sitemeta;
+			$like_value   = $wpdb->esc_like('_site_transient_' . self::PREFIX) . '%';
+			$timeout_like = $wpdb->esc_like('_site_transient_timeout_' . self::PREFIX) . '%';
+
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Bulk deletion by transient prefix requires direct query against network meta storage.
+			$deleted_main = $wpdb->query(
+				$wpdb->prepare(
+					"DELETE FROM {$meta_table} WHERE meta_key LIKE %s",
+					$like_value
+				)
+			);
+
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Bulk deletion by transient prefix requires direct query against network meta storage.
+			$deleted_timeouts = $wpdb->query(
+				$wpdb->prepare(
+					"DELETE FROM {$meta_table} WHERE meta_key LIKE %s",
+					$timeout_like
+				)
+			);
+
+			return (int) max(0, (int) $deleted_main) + (int) max(0, (int) $deleted_timeouts);
 		}
 
 		$options_table = $wpdb->options;

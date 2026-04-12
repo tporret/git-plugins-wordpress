@@ -145,7 +145,7 @@ final class GPW_GitHub_API {
 	 */
 	public function flush_cache(): void {
 		GPW_Cache_Manager::flush_all();
-		delete_option('gpw_release_cache_keys');
+		GPW_Context::delete_option('gpw_release_cache_keys');
 	}
 
 	/**
@@ -410,7 +410,7 @@ final class GPW_GitHub_API {
 	 * @return string
 	 */
 	public function get_last_error(bool $clear = false): string {
-		$error = (string) get_option(self::LAST_ERROR_OPTION_KEY, '');
+		$error = (string) GPW_Context::get_option(self::LAST_ERROR_OPTION_KEY, '');
 
 		if ($clear) {
 			$this->clear_last_error();
@@ -521,7 +521,7 @@ final class GPW_GitHub_API {
 	 * @return array<int, array{target: string, pat: string}>
 	 */
 	private function get_sources(): array {
-		$settings = get_option(self::OPTION_NAME, array());
+		$settings = GPW_Context::get_option(self::OPTION_NAME, array());
 		if (! is_array($settings)) {
 			$settings = array();
 		}
@@ -581,7 +581,7 @@ final class GPW_GitHub_API {
 	 * @return void
 	 */
 	private function set_last_error(string $error): void {
-		update_option(self::LAST_ERROR_OPTION_KEY, $error, false);
+		GPW_Context::update_option(self::LAST_ERROR_OPTION_KEY, $error, false);
 	}
 
 	/**
@@ -590,7 +590,7 @@ final class GPW_GitHub_API {
 	 * @return void
 	 */
 	private function clear_last_error(): void {
-		delete_option(self::LAST_ERROR_OPTION_KEY);
+		GPW_Context::delete_option(self::LAST_ERROR_OPTION_KEY);
 	}
 
 	/**

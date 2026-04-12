@@ -3,6 +3,8 @@
 .github/
 node_modules/
 src/
+.idea/
+.vscode/
 README.md
 .gitignore
 package.json
@@ -11,8 +13,15 @@ postcss.config.js
 tailwind.config.js
 webpack.config.js
 .distignore
+.env
+.env.*
+.cache/
+coverage/
 *.map
 .DS_Store
 Thumbs.db
 npm-debug.log*
+yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+testsite.md

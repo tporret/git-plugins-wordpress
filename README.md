@@ -5,9 +5,11 @@ Connect GitHub repositories and distribute WordPress plugins through GitHub Rele
 ## What It Does
 
 - Provides a modern React-based WordPress admin interface for source and plugin management
+- Supports multisite installs with a dedicated network-managed admin experience
 - Fetches repositories from one or more configured GitHub users or organizations
 - Shows only repositories explicitly tagged with the `wp-plugin` topic
-- Lets admins mark repositories as Active for update tracking
+- Lets admins track repositories for update checks
+- Shows a multisite Sites summary with on-demand subsite activation details
 - Installs plugins using WordPress native upgrader APIs
 - Injects updates into WordPress core plugin update checks
 - Supports authenticated downloads for private repos via GitHub PAT
@@ -26,10 +28,21 @@ For a repo to appear and work correctly:
 
 1. Install and activate this plugin in WordPress
 2. Open **Git Plugins > Settings**
+	- On multisite, use **Network Admin > Git Plugins**
 3. Add one or more **GitHub Sources** (target user/org + optional PAT)
 4. Save settings
-5. In **Available Plugins**, install plugins and toggle desired repos as **Active**
+5. In **Available Plugins**, install plugins and toggle desired repos as **Tracked**
 6. Use **Force Refresh Cache** when you need a fresh GitHub pull immediately
+
+## Multisite Behavior
+
+- Single-site installs continue to use site-local settings and cache
+- Multisite installs store sources, encrypted PATs, tracked repositories, API diagnostics, and cache at the network level
+- The plugin adds a dedicated **Network Admin > Git Plugins** screen for multisite management
+- Plugin tracking is network-wide, while WordPress activation state still follows normal site-active versus network-active rules
+- The admin UI now shows tracking state separately from plugin activation state so network-active plugins are not confused with tracked repositories
+- On multisite, the **Available Plugins** table includes a compact **Sites** summary column with a **View** action that opens a modal listing which subsites have the plugin active
+- Site details are loaded lazily when requested so larger networks remain responsive
 
 ## Security and PAT Handling
 
@@ -50,6 +63,7 @@ Recommended PAT permissions:
 - Active repositories are checked against their latest GitHub release
 - If release version is newer than the installed plugin version, WordPress shows an update notification
 - Plugin details modal is populated from release metadata and release notes
+- On multisite, super admins can review per-plugin subsite activation coverage without leaving the Available Plugins screen
 
 ## Caching and Rate Limits
 

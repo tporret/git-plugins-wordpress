@@ -1,6 +1,7 @@
 .docs/
 .github/skills/
 node_modules/
+*.zip
 
 # OS files
 .DS_Store
@@ -23,3 +24,4 @@ pnpm-debug.log*
 # Build/cache artifacts
 .cache/
 coverage/
+testsite.md

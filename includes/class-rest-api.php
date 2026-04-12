@@ -28,6 +28,16 @@ final class GPW_REST_API {
 	private const ACTIVE_REPOS_OPTION = 'gpw_active_repos';
 
 	/**
+	 * Cache key for multisite activation summaries.
+	 */
+	private const SITES_SUMMARY_CACHE_KEY = 'network_activation_summary';
+
+	/**
+	 * Number of seconds to cache activation summaries.
+	 */
+	private const SITES_SUMMARY_CACHE_TTL = 60;
+
+	/**
 	 * GitHub API service.
 	 *
 	 * @var GPW_GitHub_API
@@ -77,6 +87,12 @@ final class GPW_REST_API {
 			'permission_callback' => array($this, 'check_admin_permission'),
 		));
 
+		register_rest_route(self::NAMESPACE, '/plugins/sites', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array($this, 'get_plugin_sites'),
+			'permission_callback' => array($this, 'check_admin_permission'),
+		));
+
 		register_rest_route(self::NAMESPACE, '/plugins/toggle', array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => array($this, 'toggle_plugin'),
@@ -114,7 +130,7 @@ final class GPW_REST_API {
 	 * @return bool|WP_Error
 	 */
 	public function check_admin_permission() {
-		if (! current_user_can('manage_options')) {
+		if (! GPW_Context::current_user_can_manage_settings()) {
 			return new WP_Error(
 				'rest_forbidden',
 				__('You do not have permission to access this endpoint.', 'git-plugins-wordpress'),
@@ -130,7 +146,7 @@ final class GPW_REST_API {
 	 * @return WP_REST_Response
 	 */
 	public function get_settings(): WP_REST_Response {
-		$settings = get_option(self::OPTION_NAME, array());
+		$settings = GPW_Context::get_option(self::OPTION_NAME, array());
 
 		if (! is_array($settings)) {
 			$settings = array();
@@ -158,7 +174,11 @@ final class GPW_REST_API {
 			}
 		}
 
-		return new WP_REST_Response(array('sources' => $sources), 200);
+		return new WP_REST_Response(array(
+			'sources'   => $sources,
+			'context'   => GPW_Context::get_js_context(),
+			'lastError' => $this->github_api->get_last_error(),
+		), 200);
 	}
 
 	/**
@@ -178,7 +198,7 @@ final class GPW_REST_API {
 			);
 		}
 
-		$old_settings = get_option(self::OPTION_NAME, array());
+		$old_settings = GPW_Context::get_option(self::OPTION_NAME, array());
 		if (! is_array($old_settings)) {
 			$old_settings = array();
 		}
@@ -234,7 +254,7 @@ final class GPW_REST_API {
 			$this->github_api->flush_cache();
 		}
 
-		update_option(self::OPTION_NAME, array('sources' => $new_sources));
+		GPW_Context::update_option(self::OPTION_NAME, array('sources' => $new_sources));
 
 		// Store encryption sentinel so key rotation can be detected.
 		$has_encrypted_pat = false;
@@ -279,8 +299,13 @@ final class GPW_REST_API {
 			}
 		}
 
-		$active_repos = (array) get_option(self::ACTIVE_REPOS_OPTION, array());
-		$result       = array();
+		$active_repos       = (array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array());
+		$sites_summary      = $this->get_multisite_activation_summary();
+		$site_activation_map = isset($sites_summary['active_counts']) && is_array($sites_summary['active_counts'])
+			? $sites_summary['active_counts']
+			: array();
+		$total_site_count   = isset($sites_summary['total_sites']) ? (int) $sites_summary['total_sites'] : 0;
+		$result             = array();
 
 		foreach ($repositories as $repository) {
 			$repo_name      = isset($repository['name']) ? sanitize_text_field((string) $repository['name']) : '';
@@ -297,8 +322,18 @@ final class GPW_REST_API {
 
 			$plugin_file       = $installed_dirs[strtolower($repo_name)] ?? '';
 			$is_installed      = '' !== $plugin_file;
-			$is_active         = in_array($repo_full_name, $active_repos, true)
-				|| ($is_installed && is_plugin_active($plugin_file));
+			$is_tracked        = in_array($repo_full_name, $active_repos, true);
+			$active_site_count = $is_installed && isset($site_activation_map[$plugin_file])
+				? (int) $site_activation_map[$plugin_file]
+				: 0;
+			$is_site_active    = $is_installed && $active_site_count > 0;
+			$is_network_active = $is_installed && is_multisite() && is_plugin_active_for_network($plugin_file);
+			$sites_summary_label = $this->get_sites_summary_label(
+				$is_installed,
+				$is_network_active,
+				$active_site_count,
+				$total_site_count
+			);
 
 			$installed_version = $is_installed
 				? sanitize_text_field((string) ($installed_plugins[$plugin_file]['Version'] ?? ''))
@@ -316,13 +351,111 @@ final class GPW_REST_API {
 				'version'           => $version,
 				'installed_version' => $installed_version,
 				'is_installed'      => $is_installed,
-				'is_active'         => $is_active,
+				'is_active'         => $is_tracked,
+				'is_tracked'        => $is_tracked,
+				'is_site_active'    => $is_site_active,
+				'is_network_active' => $is_network_active,
+				'activation_scope'  => $is_network_active ? 'network' : ($is_site_active ? 'site' : 'inactive'),
+				'active_site_count' => $is_network_active ? $total_site_count : $active_site_count,
+				'total_site_count'  => $total_site_count,
+				'sites_summary_label' => $sites_summary_label,
 				'update_available'  => $update_available,
 				'plugin_file'       => $plugin_file,
 			);
 		}
 
 		return new WP_REST_Response(array('plugins' => $result), 200);
+	}
+
+	/**
+	 * GET /plugins/sites — Fetch paginated multisite activation details for a plugin.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function get_plugin_sites(WP_REST_Request $request): WP_REST_Response {
+		$plugin_file = sanitize_text_field((string) $request->get_param('plugin_file'));
+		$page        = max(1, (int) $request->get_param('page'));
+		$per_page    = max(1, min(100, (int) $request->get_param('per_page')));
+
+		if ('' === $plugin_file) {
+			return new WP_REST_Response(
+				array('message' => __('Plugin file is required.', 'git-plugins-wordpress')),
+				400
+			);
+		}
+
+		if (! is_multisite()) {
+			return new WP_REST_Response(array(
+				'plugin_file'       => $plugin_file,
+				'is_network_active' => false,
+				'active_site_count' => 0,
+				'total_site_count'  => 1,
+				'page'              => 1,
+				'per_page'          => $per_page,
+				'total_pages'       => 1,
+				'sites'             => array(),
+			), 200);
+		}
+
+		if (! function_exists('get_plugins')) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		if (! array_key_exists($plugin_file, get_plugins())) {
+			return new WP_REST_Response(
+				array('message' => __('Plugin is not installed.', 'git-plugins-wordpress')),
+				404
+			);
+		}
+
+		$is_network_active = is_plugin_active_for_network($plugin_file);
+		$site_ids          = $this->get_network_site_ids();
+		$total_site_count  = count($site_ids);
+		$active_sites      = array();
+
+		foreach ($site_ids as $site_id) {
+			$site_id = (int) $site_id;
+			$site    = get_blog_details($site_id);
+			if (! $site instanceof WP_Site) {
+				continue;
+			}
+
+			$activation_scope = 'inactive';
+			if ($is_network_active) {
+				$activation_scope = 'network';
+			} else {
+				$active_plugins = get_blog_option($site_id, 'active_plugins', array());
+				if (! is_array($active_plugins) || ! in_array($plugin_file, $active_plugins, true)) {
+					continue;
+				}
+				$activation_scope = 'site';
+			}
+
+			$active_sites[] = array(
+				'blog_id'          => $site_id,
+				'name'             => sanitize_text_field((string) $site->blogname),
+				'url'              => esc_url_raw(get_home_url($site_id, '/')),
+				'activation_scope' => $activation_scope,
+			);
+		}
+
+		$total_active_sites = count($active_sites);
+		$total_pages        = max(1, (int) ceil($total_active_sites / $per_page));
+		$offset             = ($page - 1) * $per_page;
+		$paged_sites        = array_slice($active_sites, $offset, $per_page);
+
+		return new WP_REST_Response(array(
+			'plugin_file'       => $plugin_file,
+			'is_network_active' => $is_network_active,
+			'active_site_count' => $total_active_sites,
+			'total_site_count'  => $total_site_count,
+			'page'              => $page,
+			'per_page'          => $per_page,
+			'total_pages'       => $total_pages,
+			'sites'             => $paged_sites,
+		), 200);
 	}
 
 	/**
@@ -342,7 +475,7 @@ final class GPW_REST_API {
 			);
 		}
 
-		$active_repos = (array) get_option(self::ACTIVE_REPOS_OPTION, array());
+		$active_repos = (array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array());
 
 		if (in_array($repo_full_name, $active_repos, true)) {
 			$active_repos = array_values(array_filter(
@@ -355,11 +488,12 @@ final class GPW_REST_API {
 			$new_state      = true;
 		}
 
-		update_option(self::ACTIVE_REPOS_OPTION, array_values(array_unique($active_repos)), false);
+		GPW_Context::update_option(self::ACTIVE_REPOS_OPTION, array_values(array_unique($active_repos)), false);
 
 		return new WP_REST_Response(array(
 			'message'   => __('Toggle updated.', 'git-plugins-wordpress'),
 			'is_active' => $new_state,
+			'is_tracked' => $new_state,
 		), 200);
 	}
 
@@ -371,7 +505,7 @@ final class GPW_REST_API {
 	 * @return WP_REST_Response
 	 */
 	public function install_plugin(WP_REST_Request $request): WP_REST_Response {
-		if (! current_user_can('install_plugins')) {
+		if (! GPW_Context::current_user_can_install_plugins()) {
 			return new WP_REST_Response(
 				array('message' => __('You do not have permission to install plugins.', 'git-plugins-wordpress')),
 				403
@@ -452,9 +586,9 @@ final class GPW_REST_API {
 			);
 		}
 
-		$active_repos   = (array) get_option(self::ACTIVE_REPOS_OPTION, array());
+		$active_repos   = (array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array());
 		$active_repos[] = $repo_full_name;
-		update_option(self::ACTIVE_REPOS_OPTION, array_values(array_unique($active_repos)), false);
+		GPW_Context::update_option(self::ACTIVE_REPOS_OPTION, array_values(array_unique($active_repos)), false);
 
 		return new WP_REST_Response(array('message' => __('Plugin installed successfully.', 'git-plugins-wordpress')), 200);
 	}
@@ -467,7 +601,7 @@ final class GPW_REST_API {
 	 * @return WP_REST_Response
 	 */
 	public function uninstall_plugin(WP_REST_Request $request): WP_REST_Response {
-		if (! current_user_can('delete_plugins')) {
+		if (! GPW_Context::current_user_can_delete_plugins()) {
 			return new WP_REST_Response(
 				array('message' => __('You do not have permission to delete plugins.', 'git-plugins-wordpress')),
 				403
@@ -496,8 +630,9 @@ final class GPW_REST_API {
 			);
 		}
 
-		if (is_plugin_active($plugin_file)) {
-			deactivate_plugins($plugin_file, true);
+		$is_network_active = is_multisite() && is_plugin_active_for_network($plugin_file);
+		if ($is_network_active || is_plugin_active($plugin_file)) {
+			deactivate_plugins($plugin_file, true, $is_network_active);
 		}
 
 		require_once ABSPATH . 'wp-admin/includes/file.php';
@@ -508,10 +643,10 @@ final class GPW_REST_API {
 		}
 
 		$active_repos = array_values(array_filter(
-			(array) get_option(self::ACTIVE_REPOS_OPTION, array()),
+			(array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array()),
 			static fn($r) => is_string($r) && $r !== $repo_full_name
 		));
-		update_option(self::ACTIVE_REPOS_OPTION, $active_repos, false);
+		GPW_Context::update_option(self::ACTIVE_REPOS_OPTION, $active_repos, false);
 
 		return new WP_REST_Response(array('message' => __('Plugin uninstalled successfully.', 'git-plugins-wordpress')), 200);
 	}
@@ -524,7 +659,7 @@ final class GPW_REST_API {
 	 * @return WP_REST_Response
 	 */
 	public function update_plugin(WP_REST_Request $request): WP_REST_Response {
-		if (! current_user_can('update_plugins')) {
+		if (! GPW_Context::current_user_can_update_plugins()) {
 			return new WP_REST_Response(
 				array('message' => __('You do not have permission to update plugins.', 'git-plugins-wordpress')),
 				403
@@ -600,9 +735,10 @@ final class GPW_REST_API {
 		}
 
 		// Deactivate plugin before overwriting to avoid fatal errors from partially-loaded files.
-		$was_active = is_plugin_active($plugin_file);
-		if ($was_active) {
-			deactivate_plugins($plugin_file, true);
+		$was_network_active = is_multisite() && is_plugin_active_for_network($plugin_file);
+		$was_site_active    = is_plugin_active($plugin_file);
+		if ($was_network_active || $was_site_active) {
+			deactivate_plugins($plugin_file, true, $was_network_active);
 		}
 
 		$skin     = new Automatic_Upgrader_Skin();
@@ -615,15 +751,15 @@ final class GPW_REST_API {
 
 		if (is_wp_error($result)) {
 			// Re-activate if we deactivated and the update failed.
-			if ($was_active) {
-				activate_plugin($plugin_file);
+			if ($was_network_active || $was_site_active) {
+				activate_plugin($plugin_file, '', $was_network_active, true);
 			}
 			return new WP_REST_Response(array('message' => $result->get_error_message()), 422);
 		}
 
 		if (! $result) {
-			if ($was_active) {
-				activate_plugin($plugin_file);
+			if ($was_network_active || $was_site_active) {
+				activate_plugin($plugin_file, '', $was_network_active, true);
 			}
 			return new WP_REST_Response(
 				array('message' => __('Plugin update failed.', 'git-plugins-wordpress')),
@@ -632,8 +768,8 @@ final class GPW_REST_API {
 		}
 
 		// Re-activate if it was active before the update.
-		if ($was_active) {
-			activate_plugin($plugin_file);
+		if ($was_network_active || $was_site_active) {
+			activate_plugin($plugin_file, '', $was_network_active, true);
 		}
 
 		wp_clean_plugins_cache(true);
@@ -678,5 +814,114 @@ final class GPW_REST_API {
 
 		// Fallback to zipball.
 		return isset($release['zipball_url']) ? (string) $release['zipball_url'] : '';
+	}
+
+	/**
+	 * Build a compact multisite summary for installed plugin activations.
+	 *
+	 * @return array{active_counts: array<string, int>, total_sites: int}
+	 */
+	private function get_multisite_activation_summary(): array {
+		if (! is_multisite()) {
+			return array(
+				'active_counts' => array(),
+				'total_sites'   => 1,
+			);
+		}
+
+		$cached = GPW_Cache_Manager::get(self::SITES_SUMMARY_CACHE_KEY);
+		if (is_array($cached)) {
+			$cached['active_counts'] = isset($cached['active_counts']) && is_array($cached['active_counts'])
+				? $cached['active_counts']
+				: array();
+			$cached['total_sites'] = isset($cached['total_sites']) ? (int) $cached['total_sites'] : 0;
+			return $cached;
+		}
+
+		$active_counts = array();
+		$site_ids      = $this->get_network_site_ids();
+
+		foreach ($site_ids as $site_id) {
+			$active_plugins = get_blog_option((int) $site_id, 'active_plugins', array());
+			if (! is_array($active_plugins)) {
+				continue;
+			}
+
+			foreach ($active_plugins as $plugin_file) {
+				if (! is_string($plugin_file) || '' === $plugin_file) {
+					continue;
+				}
+
+				if (! isset($active_counts[$plugin_file])) {
+					$active_counts[$plugin_file] = 0;
+				}
+
+				++$active_counts[$plugin_file];
+			}
+		}
+
+		$summary = array(
+			'active_counts' => $active_counts,
+			'total_sites'   => count($site_ids),
+		);
+
+		GPW_Cache_Manager::set(self::SITES_SUMMARY_CACHE_KEY, $summary, self::SITES_SUMMARY_CACHE_TTL);
+
+		return $summary;
+	}
+
+	/**
+	 * Get filtered network site IDs.
+	 *
+	 * @return array<int, int>
+	 */
+	private function get_network_site_ids(): array {
+		$site_ids = get_sites(array(
+			'fields'   => 'ids',
+			'number'   => 0,
+			'deleted'  => 0,
+			'spam'     => 0,
+			'archived' => 0,
+		));
+
+		if (! is_array($site_ids)) {
+			return array();
+		}
+
+		return array_map('intval', $site_ids);
+	}
+
+	/**
+	 * Build the compact sites summary label used in the main table.
+	 *
+	 * @param bool $is_installed      Whether the plugin is installed.
+	 * @param bool $is_network_active Whether the plugin is network active.
+	 * @param int  $active_site_count Number of active sites.
+	 * @param int  $total_site_count  Number of sites in the network.
+	 *
+	 * @return string
+	 */
+	private function get_sites_summary_label(bool $is_installed, bool $is_network_active, int $active_site_count, int $total_site_count): string {
+		if (! is_multisite()) {
+			return '';
+		}
+
+		if (! $is_installed) {
+			return '—';
+		}
+
+		if ($is_network_active) {
+			return sprintf(
+				/* translators: %d: number of sites in the network */
+				_n('Network-wide (%d site)', 'Network-wide (%d sites)', max(1, $total_site_count), 'git-plugins-wordpress'),
+				max(1, $total_site_count)
+			);
+		}
+
+		return sprintf(
+			/* translators: %d: number of sites with the plugin active */
+			_n('%d site', '%d sites', max(0, $active_site_count), 'git-plugins-wordpress'),
+			max(0, $active_site_count)
+		);
 	}
 }

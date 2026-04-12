@@ -191,7 +191,7 @@ final class GPW_Encryption {
 			return;
 		}
 
-		update_option(self::SENTINEL_OPTION, $encrypted, false);
+		GPW_Context::update_option(self::SENTINEL_OPTION, $encrypted, false);
 	}
 
 	/**
@@ -206,7 +206,7 @@ final class GPW_Encryption {
 			return null;
 		}
 
-		$sentinel = get_option(self::SENTINEL_OPTION, '');
+		$sentinel = GPW_Context::get_option(self::SENTINEL_OPTION, '');
 		if (! is_string($sentinel) || '' === $sentinel) {
 			return null;
 		}

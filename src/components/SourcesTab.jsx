@@ -3,6 +3,7 @@ import { Plus, Trash2, Save, RefreshCw, X } from 'lucide-react';
 
 const API_URL = window.gpwSettings?.restUrl || '/wp-json/gpw/v1';
 const NONCE = window.gpwSettings?.nonce || '';
+const APP_CONTEXT = window.gpwSettings?.context || {};
 
 function headers(extra = {}) {
   return {
@@ -17,6 +18,8 @@ export default function SourcesTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const [settingsContext, setSettingsContext] = useState(APP_CONTEXT);
+  const [lastError, setLastError] = useState('');
 
   const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
@@ -29,6 +32,8 @@ export default function SourcesTab() {
       .then((data) => {
         const s = data.sources?.length ? data.sources : [{ target: '', pat: '' }];
         setSources(s);
+        setSettingsContext({ ...(data.context || {}), ...APP_CONTEXT });
+        setLastError(data.lastError || '');
       })
       .catch(() => showToast('Failed to load settings.', 'error'))
       .finally(() => setLoading(false));
@@ -59,6 +64,7 @@ export default function SourcesTab() {
       const data = await res.json();
       if (res.ok) {
         showToast(data.message || 'Settings saved.');
+        setLastError('');
       } else {
         showToast(data.message || 'Save failed.', 'error');
       }
@@ -91,6 +97,53 @@ export default function SourcesTab() {
           {toast.message}
         </div>
       )}
+
+      <div className="grid gap-4 lg:grid-cols-[1.2fr,0.8fr,1fr]">
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+            Configuration Scope
+          </p>
+          <h2 className="mt-2 text-lg font-semibold text-slate-900">
+            {settingsContext.scope === 'network' ? 'Shared Network Settings' : 'Local Site Settings'}
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {settingsContext.isMultisite
+              ? 'Sources and tokens are stored once for the entire network so repository discovery and update tracking stay consistent across sites.'
+              : 'Sources and tokens are stored for this site only.'}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+            Admin Surface
+          </p>
+          <div className="mt-2 text-lg font-semibold text-slate-900">
+            {settingsContext.isNetworkAdmin ? 'Network Admin' : 'Site Admin'}
+          </div>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {settingsContext.isMultisite
+              ? 'Manage shared GitHub credentials from the network admin so all sites use the same source catalogue and cache.'
+              : 'Manage GitHub credentials directly from this site admin screen.'}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+            Diagnostics
+          </p>
+          <div className="mt-2 text-sm leading-6 text-slate-600">
+            {lastError ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-700">
+                {lastError}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">
+                No stored GitHub API errors.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* Card */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm">

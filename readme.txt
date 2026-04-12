@@ -24,6 +24,8 @@ To appear in the Available Plugins screen, a repository must:
 
 Core capabilities:
 - Multi-source GitHub settings (multiple users/orgs)
+- Multisite-compatible network settings screen and shared network configuration
+- Multisite Sites summary column with on-demand subsite activation details
 - Optional PAT support for private repositories and higher API limits
 - Encrypted PAT storage at rest (AES-256-GCM)
 - Masked PAT display and clear-to-replace token workflow
@@ -43,11 +45,12 @@ Security highlights:
 
 1. Upload this plugin to `/wp-content/plugins/` and activate it.
 2. Go to Git Plugins > Settings.
+	On multisite, open Network Admin > Git Plugins instead.
 3. Add one or more GitHub sources (target user/org).
 4. Optionally add a GitHub Personal Access Token (PAT) per source.
 5. Save settings.
 6. Go to Git Plugins > Available Plugins.
-7. Install plugins and mark repositories Active to opt in to update checks.
+7. Install plugins and mark repositories Tracked to opt in to update checks.
 8. Use Force Refresh Cache when you need immediate data refresh from GitHub.
 
 == Frequently Asked Questions ==
@@ -58,6 +61,11 @@ Only repositories with the `wp-plugin` topic are shown.
 = Do I need a GitHub token? =
 No for public repositories. Yes for private repositories, and recommended to avoid low unauthenticated rate limits.
 
+= How does multisite work? =
+On multisite, GitHub sources, encrypted tokens, tracked repositories, cache, and diagnostics are managed once from Network Admin > Git Plugins. Plugin activation still follows normal WordPress site-active and network-active behavior.
+
+The Available Plugins screen now includes a Sites column for super admins. It shows a quick-glance count or network-wide badge and opens a modal with per-site activation details only when requested, which keeps larger networks responsive.
+
 = What PAT permissions are recommended? =
 Fine-grained PAT with `Contents` read-only is recommended. For classic tokens, use `public_repo` for public repos, or `repo` only when private repository access is required.
 
@@ -67,7 +75,7 @@ Only `.zip` release assets with `application/zip` content type are accepted for 
 == Screenshots ==
 
 1. Settings page for GitHub target and token.
-2. Available Plugins list with Active and Install actions.
+2. Available Plugins list with tracking, activation, and Sites visibility actions.
 3. Native WordPress update notice for tracked repositories.
 
 == Changelog ==

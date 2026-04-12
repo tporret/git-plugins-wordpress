@@ -23,6 +23,7 @@ define('GPW_PLUGIN_FILE', __FILE__);
 define('GPW_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GPW_PLUGIN_URL', plugin_dir_url(__FILE__));
 
+require_once GPW_PLUGIN_DIR . 'includes/class-context.php';
 require_once GPW_PLUGIN_DIR . 'includes/class-encryption.php';
 require_once GPW_PLUGIN_DIR . 'includes/class-cache-manager.php';
 require_once GPW_PLUGIN_DIR . 'includes/class-github-api.php';
@@ -122,7 +123,9 @@ final class Git_Plugins_WP {
 		}
 
 		if (false === $sentinel_ok) {
-			add_action('admin_notices', static function (): void {
+			$notice_hook = GPW_Context::uses_network_scope() ? 'network_admin_notices' : 'admin_notices';
+
+			add_action($notice_hook, static function (): void {
 				echo '<div class="notice notice-error"><p>';
 				echo esc_html__(
 					'Git Plugins: WordPress security salts have changed. Your stored GitHub PATs can no longer be decrypted. Please re-enter your PATs in the Git Plugins settings.',
@@ -140,7 +143,7 @@ final class Git_Plugins_WP {
 	 * @return void
 	 */
 	private function maybe_migrate_legacy_settings(): void {
-		$settings = get_option('gpw_settings', array());
+		$settings = GPW_Context::get_option('gpw_settings', array());
 		if (! is_array($settings)) {
 			$settings = array();
 		}
@@ -177,7 +180,7 @@ final class Git_Plugins_WP {
 			),
 		);
 
-		update_option('gpw_settings', $new_settings);
+		GPW_Context::update_option('gpw_settings', $new_settings);
 	}
 }
 

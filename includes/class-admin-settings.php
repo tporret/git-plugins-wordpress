@@ -15,7 +15,7 @@ final class GPW_Admin_Settings {
 	/**
 	 * Admin page slug.
 	 */
-	private const PAGE_SLUG = 'gpw-settings';
+	private const PAGE_SLUG = GPW_Context::PAGE_SLUG;
 
 	/**
 	 * Register all admin hooks.
@@ -23,7 +23,12 @@ final class GPW_Admin_Settings {
 	 * @return void
 	 */
 	public function register_hooks(): void {
-		add_action('admin_menu', array($this, 'register_menu'));
+		if (GPW_Context::uses_network_scope()) {
+			add_action('network_admin_menu', array($this, 'register_menu'));
+		} else {
+			add_action('admin_menu', array($this, 'register_menu'));
+		}
+
 		add_action('admin_enqueue_scripts', array($this, 'enqueue_react_assets'));
 	}
 
@@ -33,10 +38,12 @@ final class GPW_Admin_Settings {
 	 * @return void
 	 */
 	public function register_menu(): void {
+		$capability = GPW_Context::get_settings_capability();
+
 		add_menu_page(
 			esc_html__('Git Plugins', 'git-plugins-wordpress'),
 			esc_html__('Git Plugins', 'git-plugins-wordpress'),
-			'manage_options',
+			$capability,
 			self::PAGE_SLUG,
 			array($this, 'render_page'),
 			'dashicons-admin-plugins',
@@ -47,7 +54,7 @@ final class GPW_Admin_Settings {
 			self::PAGE_SLUG,
 			esc_html__('Settings', 'git-plugins-wordpress'),
 			esc_html__('Settings', 'git-plugins-wordpress'),
-			'manage_options',
+			$capability,
 			self::PAGE_SLUG,
 			array($this, 'render_page')
 		);
@@ -59,7 +66,7 @@ final class GPW_Admin_Settings {
 	 * @return void
 	 */
 	public function render_page(): void {
-		if (! current_user_can('manage_options')) {
+		if (! GPW_Context::current_user_can_manage_settings()) {
 			return;
 		}
 		?>
@@ -77,7 +84,9 @@ final class GPW_Admin_Settings {
 	 * @return void
 	 */
 	public function enqueue_react_assets(string $hook_suffix): void {
-		if ('toplevel_page_' . self::PAGE_SLUG !== $hook_suffix) {
+		$page = isset($_GET['page']) ? sanitize_key((string) wp_unslash($_GET['page'])) : '';
+
+		if ('toplevel_page_' . self::PAGE_SLUG !== $hook_suffix && self::PAGE_SLUG !== $page) {
 			return;
 		}
 
@@ -107,6 +116,7 @@ final class GPW_Admin_Settings {
 		wp_localize_script('gpw-react-app', 'gpwSettings', array(
 			'restUrl' => esc_url_raw(rest_url('gpw/v1')),
 			'nonce'   => wp_create_nonce('wp_rest'),
+			'context' => GPW_Context::get_js_context(),
 		));
 	}
 }

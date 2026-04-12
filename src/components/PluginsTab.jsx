@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from '@wordpress/element';
-import { Download, Trash2, RefreshCw, Package, ArrowUpCircle } from 'lucide-react';
+import { Download, Trash2, RefreshCw, Package, ArrowUpCircle, X } from 'lucide-react';
 
 const API_URL = window.gpwSettings?.restUrl || '/wp-json/gpw/v1';
 const NONCE = window.gpwSettings?.nonce || '';
+const APP_CONTEXT = window.gpwSettings?.context || {};
 
 function headers(extra = {}) {
   return {
@@ -33,12 +34,158 @@ function Toggle({ checked, onChange, disabled }) {
   );
 }
 
+function SitesModal({ plugin, details, loading, onClose, onLoadMore }) {
+  if (!plugin) {
+    return null;
+  }
+
+  const loadedCount = details?.sites?.length || 0;
+  const totalCount = details?.active_site_count || 0;
+  const hasMore = details && details.page < details.total_pages;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 px-4 py-8">
+      <div className="max-h-[85vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-slate-200 px-6 py-5">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+              Sites with Plugin
+            </p>
+            <h3 className="mt-2 text-lg font-semibold text-slate-900">{plugin.name}</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Review where this plugin is active across the multisite network.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            aria-label="Close sites modal"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="grid gap-4 border-b border-slate-200 bg-slate-50 px-6 py-4 md:grid-cols-4">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Installed</div>
+            <div className="mt-2 text-sm font-medium text-slate-900">
+              {plugin.is_installed ? 'Yes' : 'No'}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Tracking</div>
+            <div className="mt-2 text-sm font-medium text-slate-900">
+              {plugin.is_tracked ? 'Tracked' : 'Not tracked'}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Activation</div>
+            <div className="mt-2 text-sm font-medium text-slate-900">
+              {plugin.is_network_active
+                ? 'Network active'
+                : totalCount > 0
+                  ? 'Site active'
+                  : 'Inactive on sites'}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Sites</div>
+            <div className="mt-2 text-sm font-medium text-slate-900">
+              {plugin.is_network_active
+                ? `${details?.total_site_count || plugin.total_site_count || 0} total sites`
+                : `${totalCount} active`}
+            </div>
+          </div>
+        </div>
+
+        <div className="max-h-[52vh] overflow-y-auto px-6 py-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 text-slate-400">
+              <RefreshCw className="h-6 w-6 animate-spin" />
+            </div>
+          ) : totalCount === 0 ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
+              This plugin is installed but not active on any subsite.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {plugin.is_network_active && (
+                <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+                  This plugin is network activated. Every site listed below inherits that activation.
+                </div>
+              )}
+
+              {details.sites.map((site) => (
+                <div
+                  key={site.blog_id}
+                  className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-4 md:flex-row md:items-center md:justify-between"
+                >
+                  <div>
+                    <div className="font-medium text-slate-900">{site.name || `Site ${site.blog_id}`}</div>
+                    <a
+                      href={site.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 block text-sm text-slate-500 transition hover:text-slate-700"
+                    >
+                      {site.url}
+                    </a>
+                  </div>
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
+                      site.activation_scope === 'network'
+                        ? 'bg-sky-100 text-sky-700'
+                        : 'bg-emerald-100 text-emerald-700'
+                    }`}
+                  >
+                    {site.activation_scope === 'network' ? 'Network inherited' : 'Site active'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-slate-200 px-6 py-4">
+          <div className="text-sm text-slate-500">
+            {details
+              ? `Showing ${loadedCount} of ${totalCount} site${totalCount === 1 ? '' : 's'}`
+              : 'Loading site details'}
+          </div>
+          <div className="flex items-center gap-2">
+            {hasMore && (
+              <button
+                type="button"
+                onClick={onLoadMore}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+              >
+                Load More
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PluginsTab() {
   const [plugins, setPlugins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState({});
   const [toast, setToast] = useState(null);
+  const [sitesModalPlugin, setSitesModalPlugin] = useState(null);
+  const [sitesModalDetails, setSitesModalDetails] = useState(null);
+  const [sitesModalLoading, setSitesModalLoading] = useState(false);
 
   const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
@@ -66,6 +213,62 @@ export default function PluginsTab() {
     fetchPlugins();
   }, [fetchPlugins]);
 
+  const fetchPluginSites = useCallback(async (plugin, page = 1) => {
+    if (!plugin?.plugin_file) {
+      return;
+    }
+
+    setSitesModalLoading(true);
+    try {
+      const params = new URLSearchParams({
+        plugin_file: plugin.plugin_file,
+        page: String(page),
+        per_page: '50',
+      });
+      const res = await fetch(`${API_URL}/plugins/sites?${params.toString()}`, {
+        headers: headers(),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSitesModalDetails((prev) => {
+          if (page === 1 || !prev) {
+            return data;
+          }
+          return {
+            ...data,
+            sites: [...prev.sites, ...data.sites],
+          };
+        });
+      } else {
+        showToast(data.message || 'Failed to load site details.', 'error');
+      }
+    } catch {
+      showToast('Network error.', 'error');
+    } finally {
+      setSitesModalLoading(false);
+    }
+  }, [showToast]);
+
+  const openSitesModal = async (plugin) => {
+    setSitesModalPlugin(plugin);
+    setSitesModalDetails(null);
+    await fetchPluginSites(plugin, 1);
+  };
+
+  const closeSitesModal = () => {
+    setSitesModalPlugin(null);
+    setSitesModalDetails(null);
+    setSitesModalLoading(false);
+  };
+
+  const loadMoreSites = async () => {
+    if (!sitesModalPlugin || !sitesModalDetails) {
+      return;
+    }
+
+    await fetchPluginSites(sitesModalPlugin, sitesModalDetails.page + 1);
+  };
+
   const handleToggle = async (plugin) => {
     const key = `toggle-${plugin.full_name}`;
     setActionLoading((prev) => ({ ...prev, [key]: true }));
@@ -79,7 +282,9 @@ export default function PluginsTab() {
       if (res.ok) {
         setPlugins((prev) =>
           prev.map((p) =>
-            p.full_name === plugin.full_name ? { ...p, is_active: data.is_active } : p
+            p.full_name === plugin.full_name
+              ? { ...p, is_active: data.is_active, is_tracked: data.is_tracked }
+              : p
           )
         );
       } else {
@@ -212,6 +417,26 @@ export default function PluginsTab() {
         </div>
       )}
 
+      {APP_CONTEXT.isMultisite && (
+        <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+          <p className="text-sm leading-6 text-slate-600">
+            The tracking toggle controls whether a repository is monitored for GitHub releases.
+            Activation is shown separately so network-active plugins are not confused with tracked
+            repositories.
+          </p>
+        </div>
+      )}
+
+      {APP_CONTEXT.isMultisite && sitesModalPlugin && (
+        <SitesModal
+          plugin={sitesModalPlugin}
+          details={sitesModalDetails}
+          loading={sitesModalLoading}
+          onClose={closeSitesModal}
+          onLoadMore={loadMoreSites}
+        />
+      )}
+
       {/* Card */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         <div className="border-b border-slate-200 px-6 py-4 flex items-center justify-between">
@@ -263,8 +488,10 @@ export default function PluginsTab() {
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wider text-slate-400">
                 <th className="px-6 py-3">Plugin</th>
-                <th className="px-6 py-3">Version</th>
-                <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3">Versions</th>
+                <th className="px-6 py-3">Tracking</th>
+                <th className="px-6 py-3">Activation</th>
+                {APP_CONTEXT.isMultisite && <th className="px-6 py-3">Sites</th>}
                 <th className="px-6 py-3 text-right">Action</th>
               </tr>
             </thead>
@@ -311,21 +538,74 @@ export default function PluginsTab() {
 
                     {/* Toggle */}
                     <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3">
                         <Toggle
-                          checked={plugin.is_active}
+                          checked={plugin.is_tracked}
                           disabled={isToggling}
                           onChange={() => handleToggle(plugin)}
                         />
-                        <span
-                          className={`text-xs font-medium ${
-                            plugin.is_active ? 'text-emerald-600' : 'text-slate-400'
-                          }`}
-                        >
-                          {plugin.is_active ? 'Active' : 'Inactive'}
-                        </span>
+                        <div>
+                          <span
+                            className={`text-xs font-medium ${
+                              plugin.is_tracked ? 'text-emerald-600' : 'text-slate-400'
+                            }`}
+                          >
+                            {plugin.is_tracked ? 'Tracked' : 'Not tracked'}
+                          </span>
+                          <div className="mt-1 text-[11px] text-slate-400">
+                            Included in GitHub release checks
+                          </div>
+                        </div>
                       </div>
                     </td>
+
+                    <td className="px-6 py-4">
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
+                          plugin.is_network_active
+                            ? 'bg-sky-100 text-sky-700'
+                            : plugin.is_site_active
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : plugin.is_installed
+                                ? 'bg-slate-100 text-slate-600'
+                                : 'bg-amber-50 text-amber-700'
+                        }`}
+                      >
+                        {plugin.is_network_active
+                          ? 'Network active'
+                          : plugin.active_site_count > 0
+                            ? 'Site active'
+                            : plugin.is_installed
+                              ? 'Installed only'
+                              : 'Not installed'}
+                      </span>
+                    </td>
+
+                    {APP_CONTEXT.isMultisite && (
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
+                              plugin.is_network_active
+                                ? 'bg-sky-100 text-sky-700'
+                                : plugin.active_site_count > 0
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {plugin.sites_summary_label}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => openSitesModal(plugin)}
+                            disabled={!plugin.is_installed}
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            View
+                          </button>
+                        </div>
+                      </td>
+                    )}
 
                     {/* Action */}
                     <td className="px-6 py-4 text-right">

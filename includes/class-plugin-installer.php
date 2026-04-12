@@ -61,7 +61,7 @@ final class GPW_Plugin_Installer {
 	 * @return void
 	 */
 	public function handle_install_repo(): void {
-		if (! current_user_can('install_plugins')) {
+		if (! GPW_Context::current_user_can_install_plugins()) {
 			wp_die(esc_html__('You are not allowed to install plugins.', 'git-plugins-wordpress'));
 		}
 
@@ -109,9 +109,9 @@ final class GPW_Plugin_Installer {
 			$this->redirect_with_error(__('Plugin installation failed.', 'git-plugins-wordpress'));
 		}
 
-		$active_repos   = (array) get_option(self::ACTIVE_REPOS_OPTION, array());
+		$active_repos   = (array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array());
 		$active_repos[] = $repo_full_name;
-		update_option(self::ACTIVE_REPOS_OPTION, array_values(array_unique($active_repos)), false);
+		GPW_Context::update_option(self::ACTIVE_REPOS_OPTION, array_values(array_unique($active_repos)), false);
 
 		wp_safe_redirect(
 			add_query_arg(
@@ -119,7 +119,7 @@ final class GPW_Plugin_Installer {
 					'page'       => self::REDIRECT_PAGE,
 					'gpw_notice' => 'install-success',
 				),
-				admin_url('admin.php')
+				$this->get_redirect_base_url()
 			)
 		);
 		exit;
@@ -131,7 +131,7 @@ final class GPW_Plugin_Installer {
 	 * @return void
 	 */
 	public function handle_uninstall_repo(): void {
-		if (! current_user_can('delete_plugins')) {
+		if (! GPW_Context::current_user_can_delete_plugins()) {
 			wp_die(esc_html__('You are not allowed to delete plugins.', 'git-plugins-wordpress'));
 		}
 
@@ -146,7 +146,7 @@ final class GPW_Plugin_Installer {
 						'gpw_notice' => 'uninstall-failed',
 						'message'    => sanitize_text_field(__('Required parameters are missing.', 'git-plugins-wordpress')),
 					),
-					admin_url('admin.php')
+					$this->get_redirect_base_url()
 				)
 			);
 			exit;
@@ -167,14 +167,15 @@ final class GPW_Plugin_Installer {
 						'gpw_notice' => 'uninstall-failed',
 						'message'    => sanitize_text_field(__('Plugin is not installed.', 'git-plugins-wordpress')),
 					),
-					admin_url('admin.php')
+					$this->get_redirect_base_url()
 				)
 			);
 			exit;
 		}
 
-		if (is_plugin_active($plugin_file)) {
-			deactivate_plugins($plugin_file, true);
+		$is_network_active = is_multisite() && is_plugin_active_for_network($plugin_file);
+		if ($is_network_active || is_plugin_active($plugin_file)) {
+			deactivate_plugins($plugin_file, true, $is_network_active);
 		}
 
 		require_once ABSPATH . 'wp-admin/includes/file.php';
@@ -188,7 +189,7 @@ final class GPW_Plugin_Installer {
 						'gpw_notice' => 'uninstall-failed',
 						'message'    => sanitize_text_field($deleted->get_error_message()),
 					),
-					admin_url('admin.php')
+					$this->get_redirect_base_url()
 				)
 			);
 			exit;
@@ -196,11 +197,11 @@ final class GPW_Plugin_Installer {
 
 		$active_repos = array_values(
 			array_filter(
-				(array) get_option(self::ACTIVE_REPOS_OPTION, array()),
+				(array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array()),
 				static fn(mixed $r): bool => is_string($r) && $r !== $repo_full_name
 			)
 		);
-		update_option(self::ACTIVE_REPOS_OPTION, $active_repos, false);
+		GPW_Context::update_option(self::ACTIVE_REPOS_OPTION, $active_repos, false);
 
 		wp_safe_redirect(
 			add_query_arg(
@@ -208,7 +209,7 @@ final class GPW_Plugin_Installer {
 					'page'       => self::REDIRECT_PAGE,
 					'gpw_notice' => 'uninstall-success',
 				),
-				admin_url('admin.php')
+				$this->get_redirect_base_url()
 			)
 		);
 		exit;
@@ -349,9 +350,18 @@ final class GPW_Plugin_Installer {
 					'gpw_notice' => 'install-failed',
 					'message'    => sanitize_text_field($message),
 				),
-				admin_url('admin.php')
+				$this->get_redirect_base_url()
 			)
 		);
 		exit;
+	}
+
+	/**
+	 * Get the correct admin base URL for redirects.
+	 *
+	 * @return string
+	 */
+	private function get_redirect_base_url(): string {
+		return GPW_Context::uses_network_scope() ? network_admin_url('admin.php') : admin_url('admin.php');
 	}
 }
