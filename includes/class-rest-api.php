@@ -545,6 +545,11 @@ final class GPW_REST_API {
 		require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
 		require_once ABSPATH . 'wp-admin/includes/file.php';
 
+		$permissions_error = $this->get_plugins_directory_permissions_error_message();
+		if ('' !== $permissions_error) {
+			return new WP_REST_Response(array('message' => $permissions_error), 422);
+		}
+
 		$token = $this->github_api->get_auth_token_for_repo($repo_full_name);
 
 		$auth_filter = null;
@@ -585,8 +590,13 @@ final class GPW_REST_API {
 		}
 
 		if (! $result) {
+			$error_message = $this->get_upgrader_error_message($upgrader, $skin);
+			if ('' === $error_message) {
+				$error_message = $this->get_plugins_directory_permissions_error_message();
+			}
+
 			return new WP_REST_Response(
-				array('message' => __('Plugin installation failed.', 'git-plugins-wordpress')),
+				array('message' => '' !== $error_message ? $error_message : __('Plugin installation failed.', 'git-plugins-wordpress')),
 				422
 			);
 		}
@@ -712,6 +722,11 @@ final class GPW_REST_API {
 		require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
 		require_once ABSPATH . 'wp-admin/includes/file.php';
 
+		$permissions_error = $this->get_plugin_update_permissions_error_message($plugin_file);
+		if ('' !== $permissions_error) {
+			return new WP_REST_Response(array('message' => $permissions_error), 422);
+		}
+
 		$token = $this->github_api->get_auth_token_for_repo($repo_full_name);
 
 		$auth_filter = null;
@@ -763,11 +778,16 @@ final class GPW_REST_API {
 		}
 
 		if (! $result) {
+			$error_message = $this->get_upgrader_error_message($upgrader, $skin);
+			if ('' === $error_message) {
+				$error_message = $this->get_plugin_update_permissions_error_message($plugin_file);
+			}
+
 			if ($was_network_active || $was_site_active) {
 				activate_plugin($plugin_file, '', $was_network_active, true);
 			}
 			return new WP_REST_Response(
-				array('message' => __('Plugin update failed.', 'git-plugins-wordpress')),
+				array('message' => '' !== $error_message ? $error_message : __('Plugin update failed.', 'git-plugins-wordpress')),
 				422
 			);
 		}
@@ -805,20 +825,117 @@ final class GPW_REST_API {
 	 */
 	private function extract_zip_url(array $release, string $repo_full_name): string {
 		$assets = isset($release['assets']) && is_array($release['assets']) ? $release['assets'] : array();
+		$has_token = '' !== $this->github_api->get_auth_token_for_repo($repo_full_name);
 
 		foreach ($assets as $asset) {
 			if (! is_array($asset)) {
 				continue;
 			}
-			$name = isset($asset['name']) ? (string) $asset['name'] : '';
-			$url  = isset($asset['browser_download_url']) ? (string) $asset['browser_download_url'] : '';
-			if (str_ends_with(strtolower($name), '.zip') && '' !== $url) {
-				return $url;
+			$name              = isset($asset['name']) ? (string) $asset['name'] : '';
+			$api_url           = isset($asset['url']) ? (string) $asset['url'] : '';
+			$browser_url       = isset($asset['browser_download_url']) ? (string) $asset['browser_download_url'] : '';
+			$preferred_zip_url = $has_token ? $api_url : $browser_url;
+			$fallback_zip_url  = $has_token ? $browser_url : $api_url;
+
+			if (str_ends_with(strtolower($name), '.zip')) {
+				if ('' !== $preferred_zip_url) {
+					return $preferred_zip_url;
+				}
+
+				if ('' !== $fallback_zip_url) {
+					return $fallback_zip_url;
+				}
 			}
 		}
 
 		// Fallback to zipball.
 		return isset($release['zipball_url']) ? (string) $release['zipball_url'] : '';
+	}
+
+	/**
+	 * Extract a useful error message from upgrader state.
+	 *
+	 * @param Plugin_Upgrader         $upgrader Upgrader instance.
+	 * @param Automatic_Upgrader_Skin $skin     Upgrader skin.
+	 *
+	 * @return string
+	 */
+	private function get_upgrader_error_message(Plugin_Upgrader $upgrader, Automatic_Upgrader_Skin $skin): string {
+		if (method_exists($skin, 'get_errors')) {
+			$errors = $skin->get_errors();
+			if ($errors instanceof WP_Error && $errors->has_errors()) {
+				return $errors->get_error_message();
+			}
+		}
+
+		if (isset($skin->result) && $skin->result instanceof WP_Error) {
+			return $skin->result->get_error_message();
+		}
+
+		if (isset($upgrader->skin) && is_object($upgrader->skin) && method_exists($upgrader->skin, 'get_errors')) {
+			$errors = $upgrader->skin->get_errors();
+			if ($errors instanceof WP_Error && $errors->has_errors()) {
+				return $errors->get_error_message();
+			}
+		}
+
+		if (isset($upgrader->skin) && is_object($upgrader->skin) && isset($upgrader->skin->result) && $upgrader->skin->result instanceof WP_Error) {
+			return $upgrader->skin->result->get_error_message();
+		}
+
+		return '';
+	}
+
+	/**
+	 * Check whether the global plugins directory is writable by the current request user.
+	 *
+	 * @return string
+	 */
+	private function get_plugins_directory_permissions_error_message(): string {
+		clearstatcache(true, WP_PLUGIN_DIR);
+
+		if (wp_is_writable(WP_PLUGIN_DIR)) {
+			return '';
+		}
+
+		return sprintf(
+			/* translators: %s: plugins directory path. */
+			__('The WordPress plugins directory is not writable by the web server: %s', 'git-plugins-wordpress'),
+			WP_PLUGIN_DIR
+		);
+	}
+
+	/**
+	 * Check whether the plugin being updated is writable by the current request user.
+	 *
+	 * @param string $plugin_file Plugin file relative to the plugins directory.
+	 *
+	 * @return string
+	 */
+	private function get_plugin_update_permissions_error_message(string $plugin_file): string {
+		$plugin_path = WP_PLUGIN_DIR . '/' . ltrim($plugin_file, '/');
+		$plugin_dir  = dirname($plugin_path);
+
+		clearstatcache(true, $plugin_dir);
+		clearstatcache(true, $plugin_path);
+
+		if (is_dir($plugin_dir) && ! wp_is_writable($plugin_dir)) {
+			return sprintf(
+				/* translators: %s: plugin directory path. */
+				__('The installed plugin directory is not writable by the web server: %s', 'git-plugins-wordpress'),
+				$plugin_dir
+			);
+		}
+
+		if (file_exists($plugin_path) && ! wp_is_writable($plugin_path)) {
+			return sprintf(
+				/* translators: %s: plugin file path. */
+				__('The installed plugin file is not writable by the web server: %s', 'git-plugins-wordpress'),
+				$plugin_path
+			);
+		}
+
+		return '';
 	}
 
 	/**
