@@ -8,10 +8,12 @@ Connect GitHub repositories and distribute WordPress plugins through GitHub Rele
 - Supports multisite installs with a dedicated network-managed admin experience
 - Fetches repositories from one or more configured GitHub users or organizations
 - Shows only repositories explicitly tagged with the `wp-plugin` topic
+- Supports stable and pre-release release channels with default and per-plugin selection
 - Lets admins track repositories for update checks
 - Shows a multisite Sites summary with on-demand subsite activation details
 - Installs plugins using WordPress native upgrader APIs
 - Injects updates into WordPress core plugin update checks
+- Exposes WP-CLI commands for source, channel, cache, and plugin deployment workflows
 - Supports authenticated downloads for private repos via GitHub PAT
 - Exposes secured admin REST endpoints for settings, plugin actions, and cache refresh
 
@@ -49,6 +51,7 @@ For a repo to appear and work correctly:
 - PAT values are encrypted at rest using OpenSSL AES-256-GCM
 - PATs are never returned by the settings API; saved tokens are masked in UI
 - Saved PAT fields are locked in UI until explicitly cleared for replacement
+- Release ZIP assets are verified against published SHA-256 sidecar checksum files before extraction
 - REST endpoints require admin capabilities (`manage_options`, plus install/delete plugin capabilities where appropriate)
 - GitHub auth headers are only injected for approved GitHub hosts during download flows
 - Encryption key-rotation detection alerts admins if WordPress salts changed and PATs must be re-entered
@@ -61,9 +64,23 @@ Recommended PAT permissions:
 ## Update Flow
 
 - Active repositories are checked against their latest GitHub release
+- Release checks respect the configured stable or pre-release channel for each managed plugin
 - If release version is newer than the installed plugin version, WordPress shows an update notification
 - Plugin details modal is populated from release metadata and release notes
 - On multisite, super admins can review per-plugin subsite activation coverage without leaving the Available Plugins screen
+
+## WP-CLI
+
+- `wp gpw source list|add|remove`
+- `wp gpw channel get|set|set-default`
+- `wp gpw cache flush`
+- `wp gpw plugins list|install|update|uninstall`
+
+## Release Verification
+
+- Managed installs and updates download the release ZIP plus its matching `.sha256` asset
+- The plugin computes the ZIP SHA-256 hash locally and aborts before extraction if the fingerprint does not match
+- The admin UI and CLI both surface whether a managed install has recorded SHA-256 verification metadata
 
 ## Caching and Rate Limits
 

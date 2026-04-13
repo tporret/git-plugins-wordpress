@@ -5,7 +5,7 @@ Tags: github, plugin-updates, deployment
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 8.1
-Stable tag: 1.1.1
+Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,17 +26,20 @@ Core capabilities:
 - Multi-source GitHub settings (multiple users/orgs)
 - Multisite-compatible network settings screen and shared network configuration
 - Multisite Sites summary column with on-demand subsite activation details
+- Default and per-plugin release channels for stable and pre-release deployments
 - Optional PAT support for private repositories and higher API limits
 - Encrypted PAT storage at rest (AES-256-GCM)
 - Masked PAT display and clear-to-replace token workflow
 - Repository filtering by `wp-plugin` topic
 - Native plugin installation through WordPress upgrader
 - WordPress update integration for active repositories
+- WP-CLI commands for source, channel, cache, install, update, and uninstall workflows
 - Plugin install/uninstall and active toggle controls from the admin UI
 - Caching controls including refresh and force cache flush
 
 Security highlights:
 - PATs are encrypted before persistence and decrypted only for outbound GitHub calls
+- Release ZIP archives are SHA-256 verified against published `.sha256` assets before extraction
 - Settings endpoints are protected by WordPress capability checks
 - GitHub authorization headers are scoped to approved GitHub hosts
 - Encryption sentinel checks detect salt/key rotation and prompt PAT re-entry when needed
@@ -72,6 +75,9 @@ Fine-grained PAT with `Contents` read-only is recommended. For classic tokens, u
 = What release assets are accepted? =
 Only `.zip` release assets with `application/zip` content type are accepted for installs and updates.
 
+= How are managed release downloads verified? =
+Managed installs and updates download the release ZIP together with its matching `.sha256` asset, verify the SHA-256 fingerprint locally, and only then extract the archive onto the server.
+
 == Screenshots ==
 
 1. Settings page for GitHub target and token.
@@ -79,6 +85,12 @@ Only `.zip` release assets with `application/zip` content type are accepted for 
 3. Native WordPress update notice for tracked repositories.
 
 == Changelog ==
+
+= 1.2.0 =
+* Added release channel management with default and per-plugin stable or pre-release selection.
+* Added WP-CLI support for sources, channels, cache flushing, and plugin deployment workflows.
+* Added pre-extraction SHA-256 verification for managed GitHub release ZIP downloads using sidecar `.sha256` assets.
+* Added verification state badges in the admin UI and verification status columns in WP-CLI output.
 
 = 1.1.1 =
 * Fixed single-site activation status so installed plugins correctly show when they are active.
@@ -111,6 +123,9 @@ Only `.zip` release assets with `application/zip` content type are accepted for 
 * Hardened token header scoping and key-rotation detection.
 
 == Upgrade Notice ==
+
+= 1.2.0 =
+Adds release channels, WP-CLI administration, and SHA-256 verified managed installs and updates.
 
 = 1.1.1 =
 Single-site status display fix plus release automation verification fixes.
