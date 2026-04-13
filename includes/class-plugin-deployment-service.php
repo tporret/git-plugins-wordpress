@@ -64,11 +64,13 @@ final class GPW_Plugin_Deployment_Service {
 			return new WP_Error('gpw_plugins_dir_not_writable', $permissions_error);
 		}
 
-		$installed_before = get_plugins();
-		$package_path     = $this->download_and_verify_package($release, $repo_full_name);
-		if (is_wp_error($package_path)) {
-			return $package_path;
+		$installed_before   = get_plugins();
+		$downloaded_package = $this->download_and_verify_package($release, $repo_full_name);
+		if (is_wp_error($downloaded_package)) {
+			return $downloaded_package;
 		}
+		$package_path = $downloaded_package['package_path'];
+		$verification = $downloaded_package['verification'];
 
 		$skin     = new Automatic_Upgrader_Skin();
 		$upgrader = new Plugin_Upgrader($skin);
@@ -93,16 +95,13 @@ final class GPW_Plugin_Deployment_Service {
 		$installed_after = get_plugins();
 		$plugin_file     = $this->resolve_installed_plugin_file($upgrader, $installed_before, $installed_after, $repo_full_name);
 
-		if ('' !== $plugin_file) {
-			$this->registry->register_plugin($repo_full_name, $plugin_file, true);
-		} else {
-			$this->registry->set_tracked($repo_full_name, true);
-		}
+		$this->registry->register_plugin($repo_full_name, $plugin_file, true, $verification);
 
 		return array(
 			'channel'     => $channel,
 			'plugin_file' => $plugin_file,
 			'release'     => $release,
+			'verification' => $verification,
 		);
 	}
 
@@ -141,10 +140,12 @@ final class GPW_Plugin_Deployment_Service {
 			return new WP_Error('gpw_plugin_not_writable', $permissions_error);
 		}
 
-		$package_path = $this->download_and_verify_package($release, $repo_full_name);
-		if (is_wp_error($package_path)) {
-			return $package_path;
+		$downloaded_package = $this->download_and_verify_package($release, $repo_full_name);
+		if (is_wp_error($downloaded_package)) {
+			return $downloaded_package;
 		}
+		$package_path = $downloaded_package['package_path'];
+		$verification = $downloaded_package['verification'];
 
 		$was_network_active = is_multisite() && is_plugin_active_for_network($plugin_file);
 		$was_site_active    = is_plugin_active($plugin_file);
@@ -182,14 +183,13 @@ final class GPW_Plugin_Deployment_Service {
 			? $plugin_file
 			: $this->resolve_installed_plugin_file($upgrader, $installed_plugins, $installed_after, $repo_full_name);
 
-		if ('' !== $resolved_plugin_file) {
-			$this->registry->register_plugin($repo_full_name, $resolved_plugin_file, true);
-		}
+		$this->registry->register_plugin($repo_full_name, '' !== $resolved_plugin_file ? $resolved_plugin_file : $plugin_file, true, $verification);
 
 		return array(
 			'channel'     => $channel,
 			'plugin_file' => '' !== $resolved_plugin_file ? $resolved_plugin_file : $plugin_file,
 			'release'     => $release,
+			'verification' => $verification,
 		);
 	}
 
@@ -267,7 +267,7 @@ final class GPW_Plugin_Deployment_Service {
 	 * @param array<string, mixed> $release        Release data.
 	 * @param string               $repo_full_name Repository full name.
 	 *
-	 * @return string|WP_Error
+	 * @return array{package_path: string, verification: array{status: string, algorithm: string, verified_at: string, release_version: string, checksum: string}}|WP_Error
 	 */
 	private function download_and_verify_package(array $release, string $repo_full_name) {
 		$package_assets = $this->extract_release_package_assets($release, $repo_full_name);
@@ -306,7 +306,8 @@ final class GPW_Plugin_Deployment_Service {
 			);
 		}
 
-		$verification = $this->verify_package_checksum($package_path, $checksum_path, $package_assets['zip_name']);
+		$release_version = isset($release['tag_name']) ? sanitize_text_field((string) $release['tag_name']) : '';
+		$verification = $this->verify_package_checksum($package_path, $checksum_path, $package_assets['zip_name'], $release_version);
 		$this->delete_temporary_file($checksum_path);
 
 		if (is_wp_error($verification)) {
@@ -314,7 +315,10 @@ final class GPW_Plugin_Deployment_Service {
 			return $verification;
 		}
 
-		return $package_path;
+		return array(
+			'package_path' => $package_path,
+			'verification' => $verification,
+		);
 	}
 
 	/**
@@ -451,13 +455,14 @@ final class GPW_Plugin_Deployment_Service {
 	/**
 	 * Validate the downloaded package against the release checksum file.
 	 *
-	 * @param string $package_path Temporary downloaded zip path.
-	 * @param string $checksum_path Temporary downloaded checksum path.
-	 * @param string $zip_name      Original zip asset name.
+	 * @param string $package_path    Temporary downloaded zip path.
+	 * @param string $checksum_path   Temporary downloaded checksum path.
+	 * @param string $zip_name        Original zip asset name.
+	 * @param string $release_version GitHub release version.
 	 *
-	 * @return true|WP_Error
+	 * @return array{status: string, algorithm: string, verified_at: string, release_version: string, checksum: string}|WP_Error
 	 */
-	private function verify_package_checksum(string $package_path, string $checksum_path, string $zip_name) {
+	private function verify_package_checksum(string $package_path, string $checksum_path, string $zip_name, string $release_version) {
 		if (! is_readable($package_path) || ! is_readable($checksum_path)) {
 			return new WP_Error('gpw_checksum_unreadable', __('Downloaded package or checksum file could not be read for verification.', 'git-plugins-wordpress'));
 		}
@@ -498,7 +503,13 @@ final class GPW_Plugin_Deployment_Service {
 			);
 		}
 
-		return true;
+		return array(
+			'status'          => GPW_Managed_Plugin_Registry::VERIFICATION_VERIFIED,
+			'algorithm'       => 'sha256',
+			'verified_at'     => gmdate('c'),
+			'release_version' => $release_version,
+			'checksum'        => $actual_hash,
+		);
 	}
 
 	/**

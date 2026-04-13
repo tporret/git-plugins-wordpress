@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from '@wordpress/element';
-import { Download, Trash2, RefreshCw, Package, ArrowUpCircle, X, GitBranch } from 'lucide-react';
+import { Download, Trash2, RefreshCw, Package, ArrowUpCircle, X, GitBranch, Shield, ShieldCheck } from 'lucide-react';
 
 const API_URL = window.gpwSettings?.restUrl || '/wp-json/gpw/v1';
 const NONCE = window.gpwSettings?.nonce || '';
@@ -15,6 +15,58 @@ function headers(extra = {}) {
 
 function channelLabel(channel) {
   return channel === 'pre-release' ? 'Pre-release' : 'Stable';
+}
+
+function formatVerificationDate(value) {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function getVerificationMeta(plugin) {
+  const verification = plugin.verification || {};
+  const verifiedAt = formatVerificationDate(verification.verified_at);
+
+  if (verification.status === 'verified') {
+    return {
+      label: verification.algorithm === 'sha256' ? 'SHA-256 verified' : 'Verified',
+      detail: verifiedAt
+        ? `${verification.release_version || plugin.version || 'current release'} checked ${verifiedAt}`
+        : verification.release_version || plugin.version || 'Verified package',
+      badgeClass: 'bg-emerald-100 text-emerald-700',
+      detailClass: 'text-emerald-600',
+      Icon: ShieldCheck,
+    };
+  }
+
+  if (plugin.is_installed) {
+    return {
+      label: 'Verification unknown',
+      detail: 'Install or update with checksum validation to record package verification.',
+      badgeClass: 'bg-slate-100 text-slate-600',
+      detailClass: 'text-slate-400',
+      Icon: Shield,
+    };
+  }
+
+  return {
+    label: 'Pending install',
+    detail: 'Verification is recorded after a managed install or update completes.',
+    badgeClass: 'bg-amber-50 text-amber-700',
+    detailClass: 'text-slate-400',
+    Icon: Shield,
+  };
 }
 
 function Toggle({ checked, onChange, disabled }) {
@@ -513,6 +565,8 @@ export default function PluginsTab() {
                 const isUninstalling = actionLoading[uninstallKey];
                 const isUpdating = actionLoading[updateKey];
                 const isToggling = actionLoading[toggleKey];
+                const verificationMeta = getVerificationMeta(plugin);
+                const VerificationIcon = verificationMeta.Icon;
 
                 return (
                   <tr key={plugin.full_name} className="hover:bg-slate-50 transition-colors">
@@ -535,6 +589,16 @@ export default function PluginsTab() {
                           <GitBranch size={12} />
                           {channelLabel(plugin.channel)}
                         </span>
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-medium ${verificationMeta.badgeClass}`}
+                          title={verificationMeta.detail}
+                        >
+                          <VerificationIcon size={12} />
+                          {verificationMeta.label}
+                        </span>
+                      </div>
+                      <div className={`mt-2 text-[11px] ${verificationMeta.detailClass}`}>
+                        {verificationMeta.detail}
                       </div>
                     </td>
 

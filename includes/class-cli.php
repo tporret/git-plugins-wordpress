@@ -375,11 +375,14 @@ final class GPW_CLI {
 
 		$rows = array();
 		foreach ($plugins as $plugin) {
+			$verification = isset($plugin['verification']) && is_array($plugin['verification']) ? $plugin['verification'] : array();
 			$rows[] = array(
 				'repository'        => (string) ($plugin['full_name'] ?? ''),
 				'installed'         => ! empty($plugin['is_installed']) ? 'yes' : 'no',
 				'tracked'           => ! empty($plugin['is_tracked']) ? 'yes' : 'no',
 				'channel'           => (string) ($plugin['channel'] ?? GPW_Channel_Manager::CHANNEL_STABLE),
+				'verification'      => $this->format_verification_status($plugin),
+				'verified_at'       => isset($verification['verified_at']) ? $this->format_verification_date((string) $verification['verified_at']) : '',
 				'github_version'    => (string) ($plugin['version'] ?? ''),
 				'installed_version' => (string) ($plugin['installed_version'] ?? ''),
 				'update_available'  => ! empty($plugin['update_available']) ? 'yes' : 'no',
@@ -389,7 +392,7 @@ final class GPW_CLI {
 		\WP_CLI\Utils\format_items(
 			'table',
 			$rows,
-			array('repository', 'installed', 'tracked', 'channel', 'github_version', 'installed_version', 'update_available')
+			array('repository', 'installed', 'tracked', 'channel', 'verification', 'verified_at', 'github_version', 'installed_version', 'update_available')
 		);
 	}
 
@@ -413,6 +416,9 @@ final class GPW_CLI {
 
 		$plugin_file = is_array($result) && isset($result['plugin_file']) ? (string) $result['plugin_file'] : '';
 		$version     = is_array($result) && isset($result['release']['tag_name']) ? (string) $result['release']['tag_name'] : '';
+		$verification = is_array($result) && isset($result['verification']) && is_array($result['verification'])
+			? $result['verification']
+			: array();
 
 		WP_CLI::success(
 			sprintf(
@@ -427,6 +433,8 @@ final class GPW_CLI {
 		if ('' !== $plugin_file) {
 			WP_CLI::log(sprintf('Plugin file: %s', $plugin_file));
 		}
+
+		$this->log_verification_summary($verification);
 	}
 
 	/**
@@ -449,6 +457,9 @@ final class GPW_CLI {
 		$this->channel_manager->set_plugin_channel($repo_full_name, $channel);
 
 		$version = is_array($result) && isset($result['release']['tag_name']) ? (string) $result['release']['tag_name'] : '';
+		$verification = is_array($result) && isset($result['verification']) && is_array($result['verification'])
+			? $result['verification']
+			: array();
 
 		WP_CLI::success(
 			sprintf(
@@ -459,6 +470,75 @@ final class GPW_CLI {
 				$channel
 			)
 		);
+
+		$this->log_verification_summary($verification);
+	}
+
+	/**
+	 * Convert plugin verification payload into a compact CLI label.
+	 *
+	 * @param array<string, mixed> $plugin Plugin payload.
+	 *
+	 * @return string
+	 */
+	private function format_verification_status(array $plugin): string {
+		$verification = isset($plugin['verification']) && is_array($plugin['verification']) ? $plugin['verification'] : array();
+
+		if ('verified' === ($verification['status'] ?? '')) {
+			return 'sha256-verified';
+		}
+
+		if (! empty($plugin['is_installed'])) {
+			return 'unknown';
+		}
+
+		return 'pending';
+	}
+
+	/**
+	 * Format verification timestamps for CLI output.
+	 *
+	 * @param string $verified_at ISO8601 verification timestamp.
+	 *
+	 * @return string
+	 */
+	private function format_verification_date(string $verified_at): string {
+		$timestamp = strtotime($verified_at);
+		if (false === $timestamp) {
+			return '';
+		}
+
+		return gmdate('Y-m-d', $timestamp);
+	}
+
+	/**
+	 * Print verification details after install or update.
+	 *
+	 * @param array<string, mixed> $verification Verification payload.
+	 *
+	 * @return void
+	 */
+	private function log_verification_summary(array $verification): void {
+		if ('verified' !== ($verification['status'] ?? '')) {
+			WP_CLI::warning('Package verification metadata was not recorded.');
+			return;
+		}
+
+		$release_version = isset($verification['release_version']) ? (string) $verification['release_version'] : '';
+		$verified_at     = isset($verification['verified_at']) ? $this->format_verification_date((string) $verification['verified_at']) : '';
+		$checksum        = isset($verification['checksum']) ? (string) $verification['checksum'] : '';
+
+		WP_CLI::log(
+			sprintf(
+				'SHA-256 verified%1$s%2$s.',
+				'' !== $release_version ? ' for ' . $release_version : '',
+				'' !== $verified_at ? ' on ' . $verified_at : ''
+			)
+		);
+
+		if ('' !== $checksum) {
+			WP_CLI::log(sprintf('Checksum: %s', $checksum));
+		}
 	}
 
 	/**

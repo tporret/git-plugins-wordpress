@@ -403,6 +403,13 @@ final class GPW_REST_API {
 			$repo_full_name = isset($repository['full_name']) ? sanitize_text_field((string) $repository['full_name']) : '';
 			$description    = isset($repository['description']) ? sanitize_text_field((string) $repository['description']) : '';
 			$managed_record = $managed_plugins[$repo_full_name] ?? null;
+			$verification   = '' !== $repo_full_name ? $this->registry->get_verification($repo_full_name) : array(
+				'status'          => GPW_Managed_Plugin_Registry::VERIFICATION_UNKNOWN,
+				'algorithm'       => '',
+				'verified_at'     => '',
+				'release_version' => '',
+				'checksum'        => '',
+			);
 
 			$release = '' !== $repo_full_name
 				? $this->github_api->get_latest_release($repo_full_name, false, $this->channel_manager->get_plugin_channel($repo_full_name))
@@ -450,6 +457,7 @@ final class GPW_REST_API {
 
 			$result[] = array(
 				'channel'           => $channel,
+				'verification'      => $verification,
 				'name'              => $repo_name,
 				'full_name'         => $repo_full_name,
 				'description'       => $description,
