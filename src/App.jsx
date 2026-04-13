@@ -1,12 +1,14 @@
 import { useState } from '@wordpress/element';
-import { Github, Settings } from 'lucide-react';
+import { Github, Settings, GitBranch } from 'lucide-react';
 import SourcesTab from './components/SourcesTab';
 import PluginsTab from './components/PluginsTab';
+import ChannelsTab from './components/ChannelsTab';
 
 const APP_CONTEXT = window.gpwSettings?.context || {};
 
 const TABS = [
   { id: 'sources', label: 'GitHub Sources', icon: Github },
+  { id: 'channels', label: 'Release Channels', icon: GitBranch },
   { id: 'plugins', label: 'Available Plugins', icon: Settings },
 ];
 
@@ -73,6 +75,7 @@ export default function App() {
 
       {/* Tab content */}
       {activeTab === 'sources' && <SourcesTab />}
+      {activeTab === 'channels' && <ChannelsTab />}
       {activeTab === 'plugins' && <PluginsTab />}
     </div>
   );

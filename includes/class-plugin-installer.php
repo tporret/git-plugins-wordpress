@@ -13,36 +13,42 @@ defined('ABSPATH') || exit;
  */
 final class GPW_Plugin_Installer {
 	/**
-	 * Option key for active repositories.
-	 */
-	private const ACTIVE_REPOS_OPTION = 'gpw_active_repos';
-
-	/**
 	 * Redirect page slug after actions.
 	 */
 	private const REDIRECT_PAGE = 'gpw-settings';
 
 	/**
-	 * GitHub API service.
+	 * Shared plugin deployment service.
 	 *
-	 * @var GPW_GitHub_API
+	 * @var GPW_Plugin_Deployment_Service
 	 */
-	private GPW_GitHub_API $github_api;
+	private GPW_Plugin_Deployment_Service $deployment_service;
 
 	/**
-	 * Optional PAT used for private asset download.
+	 * Managed plugin registry.
 	 *
-	 * @var string
+	 * @var GPW_Managed_Plugin_Registry
 	 */
-	private string $download_token = '';
+	private GPW_Managed_Plugin_Registry $registry;
+
+	/**
+	 * Release channel manager.
+	 *
+	 * @var GPW_Channel_Manager
+	 */
+	private GPW_Channel_Manager $channel_manager;
 
 	/**
 	 * Constructor.
 	 *
-	 * @param GPW_GitHub_API $github_api GitHub API wrapper.
+	 * @param GPW_Plugin_Deployment_Service $deployment_service Shared deployment service.
+	 * @param GPW_Managed_Plugin_Registry   $registry           Managed plugin registry.
+	 * @param GPW_Channel_Manager           $channel_manager    Release channel manager.
 	 */
-	public function __construct(GPW_GitHub_API $github_api) {
-		$this->github_api = $github_api;
+	public function __construct(GPW_Plugin_Deployment_Service $deployment_service, GPW_Managed_Plugin_Registry $registry, GPW_Channel_Manager $channel_manager) {
+		$this->deployment_service = $deployment_service;
+		$this->registry           = $registry;
+		$this->channel_manager    = $channel_manager;
 	}
 
 	/**
@@ -72,46 +78,13 @@ final class GPW_Plugin_Installer {
 
 		check_admin_referer('gpw_install_repo_' . $repo_full_name, 'gpw_install_nonce');
 
-		$release = $this->github_api->get_latest_release($repo_full_name);
-		if (is_wp_error($release)) {
-			$this->redirect_with_error($release->get_error_message());
-		}
-
-		$download_url = $this->extract_zip_download_url($release, $repo_full_name);
-		if ('' === $download_url) {
-			$this->redirect_with_error(__('No .zip asset found in the latest GitHub release.', 'git-plugins-wordpress'));
-		}
-
-		require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
-		require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
-		require_once ABSPATH . 'wp-admin/includes/file.php';
-
-		$this->download_token = $this->github_api->get_auth_token_for_repo($repo_full_name);
-		add_filter('http_request_args', array($this, 'inject_github_auth_header'), 10, 2);
-
-		$skin     = new Automatic_Upgrader_Skin();
-		$upgrader = new Plugin_Upgrader($skin);
-		$result   = $upgrader->install($download_url);
-
-		remove_filter('http_request_args', array($this, 'inject_github_auth_header'), 10);
-		$this->download_token = '';
-
+		$channel = $this->channel_manager->get_plugin_channel($repo_full_name);
+		$result  = $this->deployment_service->install_repository($repo_full_name, $channel);
 		if (is_wp_error($result)) {
 			$this->redirect_with_error($result->get_error_message());
 		}
 
-		if (! $result) {
-			$error_message = $this->get_upgrader_error_message($upgrader, $skin);
-			if ('' !== $error_message) {
-				$this->redirect_with_error($error_message);
-			}
-
-			$this->redirect_with_error(__('Plugin installation failed.', 'git-plugins-wordpress'));
-		}
-
-		$active_repos   = (array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array());
-		$active_repos[] = $repo_full_name;
-		GPW_Context::update_option(self::ACTIVE_REPOS_OPTION, array_values(array_unique($active_repos)), false);
+		$this->channel_manager->set_plugin_channel($repo_full_name, $channel);
 
 		wp_safe_redirect(
 			add_query_arg(
@@ -159,6 +132,16 @@ final class GPW_Plugin_Installer {
 		}
 
 		$installed_plugins = get_plugins();
+		if ('' === $plugin_file) {
+			$repo_parts   = explode('/', $repo_full_name, 2);
+			$repo_name    = isset($repo_parts[1]) ? (string) $repo_parts[1] : '';
+			$plugin_file  = $this->registry->get_plugin_file($repo_full_name);
+
+			if ('' === $plugin_file || ! array_key_exists($plugin_file, $installed_plugins)) {
+				$plugin_file = $this->registry->find_plugin_file_by_repo_name($repo_name, $installed_plugins);
+			}
+		}
+
 		if (! array_key_exists($plugin_file, $installed_plugins)) {
 			wp_safe_redirect(
 				add_query_arg(
@@ -195,13 +178,8 @@ final class GPW_Plugin_Installer {
 			exit;
 		}
 
-		$active_repos = array_values(
-			array_filter(
-				(array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array()),
-				static fn(mixed $r): bool => is_string($r) && $r !== $repo_full_name
-			)
-		);
-		GPW_Context::update_option(self::ACTIVE_REPOS_OPTION, $active_repos, false);
+		$this->registry->remove($repo_full_name);
+		$this->channel_manager->delete_plugin_channel($repo_full_name);
 
 		wp_safe_redirect(
 			add_query_arg(
@@ -213,126 +191,6 @@ final class GPW_Plugin_Installer {
 			)
 		);
 		exit;
-	}
-
-	/**
-	 * Inject Authorization header for GitHub private release asset downloads.
-	 *
-	 * @param array<string, mixed> $args Request args.
-	 * @param string               $url  Request URL.
-	 *
-	 * @return array<string, mixed>
-	 */
-	public function inject_github_auth_header(array $args, string $url): array {
-		if ('' === $this->download_token) {
-			return $args;
-		}
-
-		$host = wp_parse_url($url, PHP_URL_HOST);
-		if (! is_string($host)) {
-			return $args;
-		}
-
-		$allowed_hosts = array('api.github.com', 'github.com', 'objects.githubusercontent.com', 'codeload.github.com');
-		if (! in_array(strtolower($host), $allowed_hosts, true)) {
-			return $args;
-		}
-
-		$is_api_asset_download = 'api.github.com' === strtolower($host) && str_contains($url, '/releases/assets/');
-		$is_github_binary_host = in_array(strtolower($host), array('github.com', 'objects.githubusercontent.com', 'codeload.github.com'), true);
-		if (! $is_api_asset_download && ! $is_github_binary_host) {
-			return $args;
-		}
-
-		if (! isset($args['headers']) || ! is_array($args['headers'])) {
-			$args['headers'] = array();
-		}
-
-		$args['headers']['Authorization'] = 'Bearer ' . $this->download_token;
-
-		if ($is_api_asset_download) {
-			$args['headers']['Accept'] = 'application/octet-stream';
-		}
-
-		return $args;
-	}
-
-	/**
-	 * Get first zip download URL from release assets.
-	 *
-	 * @param array<string, mixed> $release        Release data.
-	 * @param string               $repo_full_name Repository full name (owner/repo).
-	 *
-	 * @return string
-	 */
-	private function extract_zip_download_url(array $release, string $repo_full_name): string {
-		if (! isset($release['assets']) || ! is_array($release['assets'])) {
-			return '';
-		}
-
-		$has_token = '' !== $this->github_api->get_auth_token_for_repo($repo_full_name);
-
-		foreach ($release['assets'] as $asset) {
-			if (! is_array($asset)) {
-				continue;
-			}
-
-			$name             = isset($asset['name']) ? sanitize_file_name((string) $asset['name']) : '';
-			$api_url          = isset($asset['url']) ? esc_url_raw((string) $asset['url']) : '';
-			$browser_url      = isset($asset['browser_download_url']) ? esc_url_raw((string) $asset['browser_download_url']) : '';
-			$preferred_zip_url = $has_token ? $api_url : $browser_url;
-			$fallback_zip_url  = $has_token ? $browser_url : $api_url;
-
-			if ('' === $name) {
-				continue;
-			}
-
-			if (str_ends_with(strtolower($name), '.zip')) {
-				if ('' !== $preferred_zip_url) {
-					return $preferred_zip_url;
-				}
-
-				if ('' !== $fallback_zip_url) {
-					return $fallback_zip_url;
-				}
-			}
-		}
-
-		return '';
-	}
-
-	/**
-	 * Extract a useful error message from upgrader state.
-	 *
-	 * @param Plugin_Upgrader         $upgrader Upgrader instance.
-	 * @param Automatic_Upgrader_Skin $skin     Upgrader skin.
-	 *
-	 * @return string
-	 */
-	private function get_upgrader_error_message(Plugin_Upgrader $upgrader, Automatic_Upgrader_Skin $skin): string {
-		if (method_exists($skin, 'get_errors')) {
-			$errors = $skin->get_errors();
-			if ($errors instanceof WP_Error && $errors->has_errors()) {
-				return $errors->get_error_message();
-			}
-		}
-
-		if (isset($skin->result) && $skin->result instanceof WP_Error) {
-			return $skin->result->get_error_message();
-		}
-
-		if (isset($upgrader->skin) && is_object($upgrader->skin) && method_exists($upgrader->skin, 'get_errors')) {
-			$errors = $upgrader->skin->get_errors();
-			if ($errors instanceof WP_Error && $errors->has_errors()) {
-				return $errors->get_error_message();
-			}
-		}
-
-		if (isset($upgrader->skin) && is_object($upgrader->skin) && isset($upgrader->skin->result) && $upgrader->skin->result instanceof WP_Error) {
-			return $upgrader->skin->result->get_error_message();
-		}
-
-		return '';
 	}
 
 	/**

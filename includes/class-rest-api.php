@@ -23,11 +23,6 @@ final class GPW_REST_API {
 	private const OPTION_NAME = 'gpw_settings';
 
 	/**
-	 * Option key for active repositories.
-	 */
-	private const ACTIVE_REPOS_OPTION = 'gpw_active_repos';
-
-	/**
 	 * Cache key for multisite activation summaries.
 	 */
 	private const SITES_SUMMARY_CACHE_KEY = 'network_activation_summary';
@@ -45,12 +40,39 @@ final class GPW_REST_API {
 	private GPW_GitHub_API $github_api;
 
 	/**
+	 * Managed plugin registry.
+	 *
+	 * @var GPW_Managed_Plugin_Registry
+	 */
+	private GPW_Managed_Plugin_Registry $registry;
+
+	/**
+	 * Shared plugin deployment service.
+	 *
+	 * @var GPW_Plugin_Deployment_Service
+	 */
+	private GPW_Plugin_Deployment_Service $deployment_service;
+
+	/**
+	 * Release channel manager.
+	 *
+	 * @var GPW_Channel_Manager
+	 */
+	private GPW_Channel_Manager $channel_manager;
+
+	/**
 	 * Constructor.
 	 *
-	 * @param GPW_GitHub_API $github_api GitHub API wrapper.
+	 * @param GPW_GitHub_API                $github_api          GitHub API wrapper.
+	 * @param GPW_Managed_Plugin_Registry   $registry            Managed plugin registry.
+	 * @param GPW_Plugin_Deployment_Service $deployment_service  Shared deployment service.
+	 * @param GPW_Channel_Manager           $channel_manager     Release channel manager.
 	 */
-	public function __construct(GPW_GitHub_API $github_api) {
-		$this->github_api = $github_api;
+	public function __construct(GPW_GitHub_API $github_api, GPW_Managed_Plugin_Registry $registry, GPW_Plugin_Deployment_Service $deployment_service, GPW_Channel_Manager $channel_manager) {
+		$this->github_api         = $github_api;
+		$this->registry           = $registry;
+		$this->deployment_service = $deployment_service;
+		$this->channel_manager    = $channel_manager;
 	}
 
 	/**
@@ -77,6 +99,19 @@ final class GPW_REST_API {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array($this, 'save_settings'),
+				'permission_callback' => array($this, 'check_admin_permission'),
+			),
+		));
+
+		register_rest_route(self::NAMESPACE, '/channels', array(
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array($this, 'get_channels'),
+				'permission_callback' => array($this, 'check_admin_permission'),
+			),
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array($this, 'save_channels'),
 				'permission_callback' => array($this, 'check_admin_permission'),
 			),
 		));
@@ -272,6 +307,69 @@ final class GPW_REST_API {
 	}
 
 	/**
+	 * GET /channels — Fetch default and explicit plugin channels.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function get_channels(): WP_REST_Response {
+		$channels = array();
+		foreach ($this->channel_manager->get_saved_plugin_channels() as $repo_full_name => $channel) {
+			$channels[] = array(
+				'full_name' => $repo_full_name,
+				'channel'   => $channel,
+			);
+		}
+
+		return new WP_REST_Response(array(
+			'default_channel' => $this->channel_manager->get_default_channel(),
+			'plugins'         => $channels,
+		), 200);
+	}
+
+	/**
+	 * POST /channels — Save default and per-plugin channel selections.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function save_channels(WP_REST_Request $request): WP_REST_Response {
+		$default_channel = $request->get_param('default_channel');
+		if (is_string($default_channel)) {
+			$this->channel_manager->set_default_channel($default_channel);
+		}
+
+		$effective_default = $this->channel_manager->get_default_channel();
+		$plugins           = $request->get_param('plugins');
+		if (is_array($plugins)) {
+			foreach ($plugins as $plugin) {
+				if (! is_array($plugin)) {
+					continue;
+				}
+
+				$repo_full_name = isset($plugin['full_name']) ? sanitize_text_field((string) $plugin['full_name']) : '';
+				$channel        = isset($plugin['channel']) ? (string) $plugin['channel'] : '';
+
+				if ('' === $repo_full_name) {
+					continue;
+				}
+
+				$channel = $this->channel_manager->normalize_channel($channel);
+				if ($channel === $effective_default) {
+					$this->channel_manager->delete_plugin_channel($repo_full_name);
+					continue;
+				}
+
+				$this->channel_manager->set_plugin_channel($repo_full_name, $channel);
+			}
+		}
+
+		$this->github_api->flush_cache();
+
+		return new WP_REST_Response(array('message' => __('Release channels saved.', 'git-plugins-wordpress')), 200);
+	}
+
+	/**
 	 * GET /plugins — Fetch plugin list merged with local status.
 	 *
 	 * @return WP_REST_Response
@@ -291,16 +389,9 @@ final class GPW_REST_API {
 		}
 
 		$installed_plugins = get_plugins();
-		$installed_dirs    = array();
-		foreach ($installed_plugins as $plugin_file => $plugin_data) {
-			$parts = explode('/', $plugin_file, 2);
-			if (count($parts) === 2) {
-				$installed_dirs[strtolower($parts[0])] = $plugin_file;
-			}
-		}
 
-		$active_repos       = (array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array());
-		$sites_summary      = $this->get_multisite_activation_summary();
+		$managed_plugins     = $this->registry->get_all();
+		$sites_summary       = $this->get_multisite_activation_summary();
 		$site_activation_map = isset($sites_summary['active_counts']) && is_array($sites_summary['active_counts'])
 			? $sites_summary['active_counts']
 			: array();
@@ -311,18 +402,26 @@ final class GPW_REST_API {
 			$repo_name      = isset($repository['name']) ? sanitize_text_field((string) $repository['name']) : '';
 			$repo_full_name = isset($repository['full_name']) ? sanitize_text_field((string) $repository['full_name']) : '';
 			$description    = isset($repository['description']) ? sanitize_text_field((string) $repository['description']) : '';
+			$managed_record = $managed_plugins[$repo_full_name] ?? null;
 
 			$release = '' !== $repo_full_name
-				? $this->github_api->get_latest_release($repo_full_name, false)
+				? $this->github_api->get_latest_release($repo_full_name, false, $this->channel_manager->get_plugin_channel($repo_full_name))
 				: new WP_Error('gpw_missing_repo_name', 'Missing');
+			$channel = '' !== $repo_full_name ? $this->channel_manager->get_plugin_channel($repo_full_name) : GPW_Channel_Manager::CHANNEL_STABLE;
 
 			$version = is_wp_error($release)
 				? ''
 				: (isset($release['tag_name']) ? sanitize_text_field((string) $release['tag_name']) : '');
 
-			$plugin_file       = $installed_dirs[strtolower($repo_name)] ?? '';
+			$plugin_file       = is_array($managed_record) ? (string) ($managed_record['plugin_file'] ?? '') : '';
+			if ('' !== $plugin_file && ! array_key_exists($plugin_file, $installed_plugins)) {
+				$plugin_file = '';
+			}
+			if ('' === $plugin_file) {
+				$plugin_file = $this->registry->find_plugin_file_by_repo_name($repo_name, $installed_plugins);
+			}
 			$is_installed      = '' !== $plugin_file;
-			$is_tracked        = in_array($repo_full_name, $active_repos, true);
+			$is_tracked        = is_array($managed_record) && ! empty($managed_record['is_tracked']);
 			$is_network_active = $is_installed && is_multisite() && is_plugin_active_for_network($plugin_file);
 			$active_site_count = $is_installed && isset($site_activation_map[$plugin_file])
 				? (int) $site_activation_map[$plugin_file]
@@ -350,6 +449,7 @@ final class GPW_REST_API {
 				&& version_compare($installed_version, $github_version, '<');
 
 			$result[] = array(
+				'channel'           => $channel,
 				'name'              => $repo_name,
 				'full_name'         => $repo_full_name,
 				'description'       => $description,
@@ -480,20 +580,8 @@ final class GPW_REST_API {
 			);
 		}
 
-		$active_repos = (array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array());
-
-		if (in_array($repo_full_name, $active_repos, true)) {
-			$active_repos = array_values(array_filter(
-				$active_repos,
-				static fn($r) => $r !== $repo_full_name
-			));
-			$new_state = false;
-		} else {
-			$active_repos[] = $repo_full_name;
-			$new_state      = true;
-		}
-
-		GPW_Context::update_option(self::ACTIVE_REPOS_OPTION, array_values(array_unique($active_repos)), false);
+		$new_state = ! $this->registry->is_tracked($repo_full_name);
+		$this->registry->set_tracked($repo_full_name, $new_state);
 
 		return new WP_REST_Response(array(
 			'message'   => __('Toggle updated.', 'git-plugins-wordpress'),
@@ -518,6 +606,7 @@ final class GPW_REST_API {
 		}
 
 		$repo_full_name = sanitize_text_field((string) $request->get_param('full_name'));
+		$channel        = $this->channel_manager->normalize_channel((string) $request->get_param('channel'));
 		if ('' === $repo_full_name) {
 			return new WP_REST_Response(
 				array('message' => __('Repository name is required.', 'git-plugins-wordpress')),
@@ -525,85 +614,16 @@ final class GPW_REST_API {
 			);
 		}
 
-		$release = $this->github_api->get_latest_release($repo_full_name);
-		if (is_wp_error($release)) {
-			return new WP_REST_Response(
-				array('message' => $release->get_error_message()),
-				422
-			);
+		if ('' === (string) $request->get_param('channel')) {
+			$channel = $this->channel_manager->get_plugin_channel($repo_full_name);
 		}
 
-		$download_url = $this->extract_zip_url($release, $repo_full_name);
-		if ('' === $download_url) {
-			return new WP_REST_Response(
-				array('message' => __('No .zip asset found in the latest GitHub release.', 'git-plugins-wordpress')),
-				422
-			);
-		}
-
-		require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
-		require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
-		require_once ABSPATH . 'wp-admin/includes/file.php';
-
-		$permissions_error = $this->get_plugins_directory_permissions_error_message();
-		if ('' !== $permissions_error) {
-			return new WP_REST_Response(array('message' => $permissions_error), 422);
-		}
-
-		$token = $this->github_api->get_auth_token_for_repo($repo_full_name);
-
-		$auth_filter = null;
-		if ('' !== $token) {
-			$allowed_hosts = array(
-				'api.github.com',
-				'github.com',
-				'objects.githubusercontent.com',
-				'codeload.github.com',
-			);
-			$auth_filter = function (array $args, string $url) use ($token, $allowed_hosts): array {
-				$host = wp_parse_url($url, PHP_URL_HOST);
-				if (! is_string($host) || ! in_array(strtolower($host), $allowed_hosts, true)) {
-					return $args;
-				}
-				if (! isset($args['headers']) || ! is_array($args['headers'])) {
-					$args['headers'] = array();
-				}
-				$args['headers']['Authorization'] = 'Bearer ' . $token;
-				if ('api.github.com' === strtolower($host) && str_contains($url, '/releases/assets/')) {
-					$args['headers']['Accept'] = 'application/octet-stream';
-				}
-				return $args;
-			};
-			add_filter('http_request_args', $auth_filter, 10, 2);
-		}
-
-		$skin     = new Automatic_Upgrader_Skin();
-		$upgrader = new Plugin_Upgrader($skin);
-		$result   = $upgrader->install($download_url);
-
-		if (null !== $auth_filter) {
-			remove_filter('http_request_args', $auth_filter, 10);
-		}
-
+		$result = $this->deployment_service->install_repository($repo_full_name, $channel);
 		if (is_wp_error($result)) {
 			return new WP_REST_Response(array('message' => $result->get_error_message()), 422);
 		}
 
-		if (! $result) {
-			$error_message = $this->get_upgrader_error_message($upgrader, $skin);
-			if ('' === $error_message) {
-				$error_message = $this->get_plugins_directory_permissions_error_message();
-			}
-
-			return new WP_REST_Response(
-				array('message' => '' !== $error_message ? $error_message : __('Plugin installation failed.', 'git-plugins-wordpress')),
-				422
-			);
-		}
-
-		$active_repos   = (array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array());
-		$active_repos[] = $repo_full_name;
-		GPW_Context::update_option(self::ACTIVE_REPOS_OPTION, array_values(array_unique($active_repos)), false);
+		$this->channel_manager->set_plugin_channel($repo_full_name, $channel);
 
 		return new WP_REST_Response(array('message' => __('Plugin installed successfully.', 'git-plugins-wordpress')), 200);
 	}
@@ -638,6 +658,15 @@ final class GPW_REST_API {
 		}
 
 		$installed_plugins = get_plugins();
+		if ('' === $plugin_file) {
+			$repo_parts   = explode('/', $repo_full_name, 2);
+			$repo_name    = isset($repo_parts[1]) ? sanitize_text_field((string) $repo_parts[1]) : '';
+			$plugin_file  = $this->registry->get_plugin_file($repo_full_name);
+			if ('' === $plugin_file || ! array_key_exists($plugin_file, $installed_plugins)) {
+				$plugin_file = $this->registry->find_plugin_file_by_repo_name($repo_name, $installed_plugins);
+			}
+		}
+
 		if (! array_key_exists($plugin_file, $installed_plugins)) {
 			return new WP_REST_Response(
 				array('message' => __('Plugin is not installed.', 'git-plugins-wordpress')),
@@ -657,11 +686,8 @@ final class GPW_REST_API {
 			return new WP_REST_Response(array('message' => $deleted->get_error_message()), 422);
 		}
 
-		$active_repos = array_values(array_filter(
-			(array) GPW_Context::get_option(self::ACTIVE_REPOS_OPTION, array()),
-			static fn($r) => is_string($r) && $r !== $repo_full_name
-		));
-		GPW_Context::update_option(self::ACTIVE_REPOS_OPTION, $active_repos, false);
+		$this->registry->remove($repo_full_name);
+		$this->channel_manager->delete_plugin_channel($repo_full_name);
 
 		return new WP_REST_Response(array('message' => __('Plugin uninstalled successfully.', 'git-plugins-wordpress')), 200);
 	}
@@ -683,6 +709,7 @@ final class GPW_REST_API {
 
 		$repo_full_name = sanitize_text_field((string) $request->get_param('full_name'));
 		$plugin_file    = sanitize_text_field((string) $request->get_param('plugin_file'));
+		$channel        = $this->channel_manager->normalize_channel((string) $request->get_param('channel'));
 
 		if ('' === $repo_full_name || '' === $plugin_file) {
 			return new WP_REST_Response(
@@ -691,113 +718,37 @@ final class GPW_REST_API {
 			);
 		}
 
+		if ('' === (string) $request->get_param('channel')) {
+			$channel = $this->channel_manager->get_plugin_channel($repo_full_name);
+		}
+
 		if (! function_exists('get_plugins')) {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
 		}
 
-		if (! array_key_exists($plugin_file, get_plugins())) {
+		$installed_plugins = get_plugins();
+		if ('' === $plugin_file) {
+			$repo_parts   = explode('/', $repo_full_name, 2);
+			$repo_name    = isset($repo_parts[1]) ? sanitize_text_field((string) $repo_parts[1]) : '';
+			$plugin_file  = $this->registry->get_plugin_file($repo_full_name);
+			if ('' === $plugin_file || ! array_key_exists($plugin_file, $installed_plugins)) {
+				$plugin_file = $this->registry->find_plugin_file_by_repo_name($repo_name, $installed_plugins);
+			}
+		}
+
+		if (! array_key_exists($plugin_file, $installed_plugins)) {
 			return new WP_REST_Response(
 				array('message' => __('Plugin is not installed.', 'git-plugins-wordpress')),
 				404
 			);
 		}
 
-		$release = $this->github_api->get_latest_release($repo_full_name);
-		if (is_wp_error($release)) {
-			return new WP_REST_Response(
-				array('message' => $release->get_error_message()),
-				422
-			);
-		}
-
-		$download_url = $this->extract_zip_url($release, $repo_full_name);
-		if ('' === $download_url) {
-			return new WP_REST_Response(
-				array('message' => __('No .zip asset found in the latest GitHub release.', 'git-plugins-wordpress')),
-				422
-			);
-		}
-
-		require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
-		require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
-		require_once ABSPATH . 'wp-admin/includes/file.php';
-
-		$permissions_error = $this->get_plugin_update_permissions_error_message($plugin_file);
-		if ('' !== $permissions_error) {
-			return new WP_REST_Response(array('message' => $permissions_error), 422);
-		}
-
-		$token = $this->github_api->get_auth_token_for_repo($repo_full_name);
-
-		$auth_filter = null;
-		if ('' !== $token) {
-			$allowed_hosts = array(
-				'api.github.com',
-				'github.com',
-				'objects.githubusercontent.com',
-				'codeload.github.com',
-			);
-			$auth_filter = function (array $args, string $url) use ($token, $allowed_hosts): array {
-				$host = wp_parse_url($url, PHP_URL_HOST);
-				if (! is_string($host) || ! in_array(strtolower($host), $allowed_hosts, true)) {
-					return $args;
-				}
-				if (! isset($args['headers']) || ! is_array($args['headers'])) {
-					$args['headers'] = array();
-				}
-				$args['headers']['Authorization'] = 'Bearer ' . $token;
-				if ('api.github.com' === strtolower($host) && str_contains($url, '/releases/assets/')) {
-					$args['headers']['Accept'] = 'application/octet-stream';
-				}
-				return $args;
-			};
-			add_filter('http_request_args', $auth_filter, 10, 2);
-		}
-
-		// Deactivate plugin before overwriting to avoid fatal errors from partially-loaded files.
-		$was_network_active = is_multisite() && is_plugin_active_for_network($plugin_file);
-		$was_site_active    = is_plugin_active($plugin_file);
-		if ($was_network_active || $was_site_active) {
-			deactivate_plugins($plugin_file, true, $was_network_active);
-		}
-
-		$skin     = new Automatic_Upgrader_Skin();
-		$upgrader = new Plugin_Upgrader($skin);
-		$result   = $upgrader->install($download_url, array('overwrite_package' => true));
-
-		if (null !== $auth_filter) {
-			remove_filter('http_request_args', $auth_filter, 10);
-		}
-
+		$result = $this->deployment_service->update_repository($repo_full_name, $plugin_file, $channel);
 		if (is_wp_error($result)) {
-			// Re-activate if we deactivated and the update failed.
-			if ($was_network_active || $was_site_active) {
-				activate_plugin($plugin_file, '', $was_network_active, true);
-			}
 			return new WP_REST_Response(array('message' => $result->get_error_message()), 422);
 		}
 
-		if (! $result) {
-			$error_message = $this->get_upgrader_error_message($upgrader, $skin);
-			if ('' === $error_message) {
-				$error_message = $this->get_plugin_update_permissions_error_message($plugin_file);
-			}
-
-			if ($was_network_active || $was_site_active) {
-				activate_plugin($plugin_file, '', $was_network_active, true);
-			}
-			return new WP_REST_Response(
-				array('message' => '' !== $error_message ? $error_message : __('Plugin update failed.', 'git-plugins-wordpress')),
-				422
-			);
-		}
-
-		// Re-activate if it was active before the update.
-		if ($was_network_active || $was_site_active) {
-			activate_plugin($plugin_file, '', $was_network_active, true);
-		}
-
-		wp_clean_plugins_cache(true);
+		$this->channel_manager->set_plugin_channel($repo_full_name, $channel);
 
 		return new WP_REST_Response(array('message' => __('Plugin updated successfully.', 'git-plugins-wordpress')), 200);
 	}
@@ -813,129 +764,6 @@ final class GPW_REST_API {
 		wp_clean_plugins_cache(true);
 
 		return new WP_REST_Response(array('message' => __('GitHub cache cleared. Plugins will refresh on next load.', 'git-plugins-wordpress')), 200);
-	}
-
-	/**
-	 * Extract .zip download URL from a release.
-	 *
-	 * @param array<string, mixed> $release         Release data.
-	 * @param string               $repo_full_name  Repository full name.
-	 *
-	 * @return string
-	 */
-	private function extract_zip_url(array $release, string $repo_full_name): string {
-		$assets = isset($release['assets']) && is_array($release['assets']) ? $release['assets'] : array();
-		$has_token = '' !== $this->github_api->get_auth_token_for_repo($repo_full_name);
-
-		foreach ($assets as $asset) {
-			if (! is_array($asset)) {
-				continue;
-			}
-			$name              = isset($asset['name']) ? (string) $asset['name'] : '';
-			$api_url           = isset($asset['url']) ? (string) $asset['url'] : '';
-			$browser_url       = isset($asset['browser_download_url']) ? (string) $asset['browser_download_url'] : '';
-			$preferred_zip_url = $has_token ? $api_url : $browser_url;
-			$fallback_zip_url  = $has_token ? $browser_url : $api_url;
-
-			if (str_ends_with(strtolower($name), '.zip')) {
-				if ('' !== $preferred_zip_url) {
-					return $preferred_zip_url;
-				}
-
-				if ('' !== $fallback_zip_url) {
-					return $fallback_zip_url;
-				}
-			}
-		}
-
-		// Fallback to zipball.
-		return isset($release['zipball_url']) ? (string) $release['zipball_url'] : '';
-	}
-
-	/**
-	 * Extract a useful error message from upgrader state.
-	 *
-	 * @param Plugin_Upgrader         $upgrader Upgrader instance.
-	 * @param Automatic_Upgrader_Skin $skin     Upgrader skin.
-	 *
-	 * @return string
-	 */
-	private function get_upgrader_error_message(Plugin_Upgrader $upgrader, Automatic_Upgrader_Skin $skin): string {
-		if (method_exists($skin, 'get_errors')) {
-			$errors = $skin->get_errors();
-			if ($errors instanceof WP_Error && $errors->has_errors()) {
-				return $errors->get_error_message();
-			}
-		}
-
-		if (isset($skin->result) && $skin->result instanceof WP_Error) {
-			return $skin->result->get_error_message();
-		}
-
-		if (isset($upgrader->skin) && is_object($upgrader->skin) && method_exists($upgrader->skin, 'get_errors')) {
-			$errors = $upgrader->skin->get_errors();
-			if ($errors instanceof WP_Error && $errors->has_errors()) {
-				return $errors->get_error_message();
-			}
-		}
-
-		if (isset($upgrader->skin) && is_object($upgrader->skin) && isset($upgrader->skin->result) && $upgrader->skin->result instanceof WP_Error) {
-			return $upgrader->skin->result->get_error_message();
-		}
-
-		return '';
-	}
-
-	/**
-	 * Check whether the global plugins directory is writable by the current request user.
-	 *
-	 * @return string
-	 */
-	private function get_plugins_directory_permissions_error_message(): string {
-		clearstatcache(true, WP_PLUGIN_DIR);
-
-		if (wp_is_writable(WP_PLUGIN_DIR)) {
-			return '';
-		}
-
-		return sprintf(
-			/* translators: %s: plugins directory path. */
-			__('The WordPress plugins directory is not writable by the web server: %s', 'git-plugins-wordpress'),
-			WP_PLUGIN_DIR
-		);
-	}
-
-	/**
-	 * Check whether the plugin being updated is writable by the current request user.
-	 *
-	 * @param string $plugin_file Plugin file relative to the plugins directory.
-	 *
-	 * @return string
-	 */
-	private function get_plugin_update_permissions_error_message(string $plugin_file): string {
-		$plugin_path = WP_PLUGIN_DIR . '/' . ltrim($plugin_file, '/');
-		$plugin_dir  = dirname($plugin_path);
-
-		clearstatcache(true, $plugin_dir);
-		clearstatcache(true, $plugin_path);
-
-		if (is_dir($plugin_dir) && ! wp_is_writable($plugin_dir)) {
-			return sprintf(
-				/* translators: %s: plugin directory path. */
-				__('The installed plugin directory is not writable by the web server: %s', 'git-plugins-wordpress'),
-				$plugin_dir
-			);
-		}
-
-		if (file_exists($plugin_path) && ! wp_is_writable($plugin_path)) {
-			return sprintf(
-				/* translators: %s: plugin file path. */
-				__('The installed plugin file is not writable by the web server: %s', 'git-plugins-wordpress'),
-				$plugin_path
-			);
-		}
-
-		return '';
 	}
 
 	/**

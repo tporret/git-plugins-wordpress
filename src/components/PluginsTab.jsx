@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from '@wordpress/element';
-import { Download, Trash2, RefreshCw, Package, ArrowUpCircle, X } from 'lucide-react';
+import { Download, Trash2, RefreshCw, Package, ArrowUpCircle, X, GitBranch } from 'lucide-react';
 
 const API_URL = window.gpwSettings?.restUrl || '/wp-json/gpw/v1';
 const NONCE = window.gpwSettings?.nonce || '';
@@ -11,6 +11,10 @@ function headers(extra = {}) {
     'X-WP-Nonce': NONCE,
     ...extra,
   };
+}
+
+function channelLabel(channel) {
+  return channel === 'pre-release' ? 'Pre-release' : 'Stable';
 }
 
 function Toggle({ checked, onChange, disabled }) {
@@ -304,7 +308,7 @@ export default function PluginsTab() {
       const res = await fetch(`${API_URL}/plugins/install`, {
         method: 'POST',
         headers: headers(),
-        body: JSON.stringify({ full_name: plugin.full_name }),
+        body: JSON.stringify({ full_name: plugin.full_name, channel: plugin.channel }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -349,7 +353,11 @@ export default function PluginsTab() {
       const res = await fetch(`${API_URL}/plugins/update`, {
         method: 'POST',
         headers: headers(),
-        body: JSON.stringify({ full_name: plugin.full_name, plugin_file: plugin.plugin_file }),
+        body: JSON.stringify({
+          full_name: plugin.full_name,
+          plugin_file: plugin.plugin_file,
+          channel: plugin.channel,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -516,6 +524,18 @@ export default function PluginsTab() {
                           {plugin.description}
                         </div>
                       )}
+                      <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-medium ${
+                            plugin.channel === 'pre-release'
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          <GitBranch size={12} />
+                          {channelLabel(plugin.channel)}
+                        </span>
+                      </div>
                     </td>
 
                     {/* Version badge */}

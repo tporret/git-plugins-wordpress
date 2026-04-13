@@ -26,7 +26,10 @@ define('GPW_PLUGIN_URL', plugin_dir_url(__FILE__));
 require_once GPW_PLUGIN_DIR . 'includes/class-context.php';
 require_once GPW_PLUGIN_DIR . 'includes/class-encryption.php';
 require_once GPW_PLUGIN_DIR . 'includes/class-cache-manager.php';
+require_once GPW_PLUGIN_DIR . 'includes/class-channel-manager.php';
 require_once GPW_PLUGIN_DIR . 'includes/class-github-api.php';
+require_once GPW_PLUGIN_DIR . 'includes/class-managed-plugin-registry.php';
+require_once GPW_PLUGIN_DIR . 'includes/class-plugin-deployment-service.php';
 require_once GPW_PLUGIN_DIR . 'includes/class-admin-settings.php';
 require_once GPW_PLUGIN_DIR . 'includes/class-plugin-installer.php';
 require_once GPW_PLUGIN_DIR . 'includes/class-rest-api.php';
@@ -48,6 +51,27 @@ final class Git_Plugins_WP {
 	 * @var GPW_GitHub_API
 	 */
 	private GPW_GitHub_API $github_api;
+
+	/**
+	 * Release channel manager.
+	 *
+	 * @var GPW_Channel_Manager
+	 */
+	private GPW_Channel_Manager $channel_manager;
+
+	/**
+	 * Managed plugin registry.
+	 *
+	 * @var GPW_Managed_Plugin_Registry
+	 */
+	private GPW_Managed_Plugin_Registry $managed_plugin_registry;
+
+	/**
+	 * Shared plugin deployment service.
+	 *
+	 * @var GPW_Plugin_Deployment_Service
+	 */
+	private GPW_Plugin_Deployment_Service $plugin_deployment_service;
 
 	/**
 	 * Admin settings module.
@@ -87,10 +111,13 @@ final class Git_Plugins_WP {
 	 * Constructor.
 	 */
 	private function __construct() {
-		$this->github_api       = new GPW_GitHub_API();
-		$this->admin_settings   = new GPW_Admin_Settings();
-		$this->plugin_installer = new GPW_Plugin_Installer($this->github_api);
-		$this->rest_api         = new GPW_REST_API($this->github_api);
+		$this->channel_manager           = new GPW_Channel_Manager();
+		$this->github_api                = new GPW_GitHub_API();
+		$this->managed_plugin_registry   = new GPW_Managed_Plugin_Registry();
+		$this->plugin_deployment_service = new GPW_Plugin_Deployment_Service($this->github_api, $this->managed_plugin_registry);
+		$this->admin_settings            = new GPW_Admin_Settings();
+		$this->plugin_installer          = new GPW_Plugin_Installer($this->plugin_deployment_service, $this->managed_plugin_registry, $this->channel_manager);
+		$this->rest_api                  = new GPW_REST_API($this->github_api, $this->managed_plugin_registry, $this->plugin_deployment_service, $this->channel_manager);
 	}
 
 	/**
@@ -185,3 +212,8 @@ final class Git_Plugins_WP {
 }
 
 Git_Plugins_WP::instance()->init();
+
+if (defined('WP_CLI') && WP_CLI && class_exists('WP_CLI')) {
+	require_once GPW_PLUGIN_DIR . 'includes/class-cli.php';
+	WP_CLI::add_command('gpw', 'GPW_CLI');
+}

@@ -45,6 +45,16 @@ final class GPW_GitHub_API {
 	private const API_BASE = 'https://api.github.com';
 
 	/**
+	 * Stable release channel.
+	 */
+	private const CHANNEL_STABLE = GPW_Channel_Manager::CHANNEL_STABLE;
+
+	/**
+	 * Pre-release channel.
+	 */
+	private const CHANNEL_PRERELEASE = GPW_Channel_Manager::CHANNEL_PRERELEASE;
+
+	/**
 	 * Whether the current request has already hit a rate limit.
 	 *
 	 * @var bool
@@ -153,10 +163,11 @@ final class GPW_GitHub_API {
 	 *
 	 * @param string $repo_full_name Repository full name (owner/repo).
 	 * @param bool   $persist_error  Whether to store API errors for admin notices.
+	 * @param string $channel        Release channel to resolve.
 	 *
 	 * @return array<string, mixed>|WP_Error
 	 */
-	public function get_latest_release(string $repo_full_name, bool $persist_error = true) {
+	public function get_latest_release(string $repo_full_name, bool $persist_error = true, string $channel = self::CHANNEL_STABLE) {
 		if ($this->is_rate_limited()) {
 			$message = __('GitHub API rate limit lockout is active. Try again later.', 'git-plugins-wordpress');
 			if ($persist_error) {
@@ -166,6 +177,7 @@ final class GPW_GitHub_API {
 		}
 
 		$repo_full_name = sanitize_text_field($repo_full_name);
+		$channel        = $this->normalize_release_channel($channel);
 		if ('' === $repo_full_name || ! str_contains($repo_full_name, '/')) {
 			$message = __('Invalid repository name.', 'git-plugins-wordpress');
 			if ($persist_error) {
@@ -174,7 +186,7 @@ final class GPW_GitHub_API {
 			return new WP_Error('gpw_invalid_repo_name', $message);
 		}
 
-		$cache_key = $this->get_release_cache_key($repo_full_name);
+		$cache_key = $this->get_release_cache_key($repo_full_name, $channel);
 		$cached    = GPW_Cache_Manager::get($cache_key);
 
 		if (is_array($cached)) {
@@ -192,8 +204,24 @@ final class GPW_GitHub_API {
 			$headers['Authorization'] = 'Bearer ' . $token;
 		}
 
-		$url = sprintf('%1$s/repos/%2$s/releases/latest', self::API_BASE, $this->encode_repo_full_name($repo_full_name));
+		if (self::CHANNEL_PRERELEASE === $channel) {
+			$release = $this->get_latest_release_from_list($repo_full_name, $headers, true);
+			if (is_array($release)) {
+				GPW_Cache_Manager::set($cache_key, $release, 12 * HOUR_IN_SECONDS);
+				if ($persist_error) {
+					$this->clear_last_error();
+				}
+				return $release;
+			}
 
+			if ($persist_error) {
+				$this->set_last_error($release->get_error_message());
+			}
+
+			return $release;
+		}
+
+		$url = sprintf('%1$s/repos/%2$s/releases/latest', self::API_BASE, $this->encode_repo_full_name($repo_full_name));
 		$response = wp_remote_get(
 			$url,
 			array(
@@ -215,9 +243,10 @@ final class GPW_GitHub_API {
 			return new WP_Error('gpw_http_request_failed', $message);
 		}
 
-		$status_code = (int) wp_remote_retrieve_response_code($response);
-		$body        = wp_remote_retrieve_body($response);
-		$data        = json_decode($body, true);
+		$status_code   = (int) wp_remote_retrieve_response_code($response);
+		$body          = wp_remote_retrieve_body($response);
+		$data          = json_decode($body, true);
+		$error_message = is_array($data) && isset($data['message']) ? (string) $data['message'] : __('GitHub API returned an unexpected response.', 'git-plugins-wordpress');
 
 		if (200 === $status_code && is_array($data)) {
 			GPW_Cache_Manager::set($cache_key, $data, 12 * HOUR_IN_SECONDS);
@@ -226,8 +255,6 @@ final class GPW_GitHub_API {
 			}
 			return $data;
 		}
-
-		$error_message = is_array($data) && isset($data['message']) ? (string) $data['message'] : __('GitHub API returned an unexpected response.', 'git-plugins-wordpress');
 
 		if ($this->should_lockout_for_rate_limit($status_code, $response, $error_message)) {
 			$message = __('GitHub API rate limit reached. Requests are paused for one hour.', 'git-plugins-wordpress');
@@ -246,7 +273,7 @@ final class GPW_GitHub_API {
 		}
 
 		if (404 === $status_code) {
-			$fallback_release = $this->get_latest_release_from_list($repo_full_name, $headers);
+			$fallback_release = $this->get_latest_release_from_list($repo_full_name, $headers, false);
 			if (is_array($fallback_release)) {
 				GPW_Cache_Manager::set($cache_key, $fallback_release, 12 * HOUR_IN_SECONDS);
 				if ($persist_error) {
@@ -255,18 +282,11 @@ final class GPW_GitHub_API {
 				return $fallback_release;
 			}
 
-			if (is_wp_error($fallback_release)) {
-				if ($persist_error) {
-					$this->set_last_error($fallback_release->get_error_message());
-				}
-				return $fallback_release;
+			if ($persist_error) {
+				$this->set_last_error($fallback_release->get_error_message());
 			}
 
-			$message = __('Latest release not found (404). Ensure a published release exists. For private repositories, verify the PAT has repository read access.', 'git-plugins-wordpress');
-			if ($persist_error) {
-				$this->set_last_error($message);
-			}
-			return new WP_Error('gpw_release_not_found', $message);
+			return $fallback_release;
 		}
 
 		$message = sprintf(
@@ -285,12 +305,13 @@ final class GPW_GitHub_API {
 	/**
 	 * Fallback release lookup using the releases list endpoint.
 	 *
-	 * @param string               $repo_full_name Repository full name (owner/repo).
-	 * @param array<string, mixed> $headers        HTTP headers.
+	 * @param string               $repo_full_name     Repository full name (owner/repo).
+	 * @param array<string, mixed> $headers            HTTP headers.
+	 * @param bool                 $prefer_prerelease Whether prereleases should be preferred.
 	 *
 	 * @return array<string, mixed>|WP_Error|null
 	 */
-	private function get_latest_release_from_list(string $repo_full_name, array $headers) {
+	private function get_latest_release_from_list(string $repo_full_name, array $headers, bool $prefer_prerelease) {
 		$url = sprintf('%1$s/repos/%2$s/releases?per_page=10', self::API_BASE, $this->encode_repo_full_name($repo_full_name));
 
 		$response = wp_remote_get(
@@ -318,22 +339,44 @@ final class GPW_GitHub_API {
 		$data        = json_decode($body, true);
 
 		if (200 === $status_code && is_array($data)) {
+			$stable_fallback = null;
+
 			foreach ($data as $release) {
 				if (! is_array($release)) {
 					continue;
 				}
 
 				$is_draft = isset($release['draft']) ? (bool) $release['draft'] : false;
+				$is_prerelease = isset($release['prerelease']) ? (bool) $release['prerelease'] : false;
 				if ($is_draft) {
 					continue;
 				}
 
-				return $release;
+				if ($prefer_prerelease) {
+					if ($is_prerelease) {
+						return $release;
+					}
+
+					if (null === $stable_fallback) {
+						$stable_fallback = $release;
+					}
+					continue;
+				}
+
+				if (! $is_prerelease) {
+					return $release;
+				}
+			}
+
+			if ($prefer_prerelease && is_array($stable_fallback)) {
+				return $stable_fallback;
 			}
 
 			return new WP_Error(
 				'gpw_release_not_found',
-				__('No published release was found for this repository.', 'git-plugins-wordpress')
+				$prefer_prerelease
+					? __('No published release or pre-release was found for this repository.', 'git-plugins-wordpress')
+					: __('No published stable release was found for this repository.', 'git-plugins-wordpress')
 			);
 		}
 
@@ -369,6 +412,19 @@ final class GPW_GitHub_API {
 				$error_message
 			)
 		);
+	}
+
+	/**
+	 * Normalize release channel values.
+	 *
+	 * @param string $channel Channel name.
+	 *
+	 * @return string
+	 */
+	private function normalize_release_channel(string $channel): string {
+		$channel = strtolower(trim($channel));
+
+		return self::CHANNEL_PRERELEASE === $channel ? self::CHANNEL_PRERELEASE : self::CHANNEL_STABLE;
 	}
 
 	/**
@@ -613,20 +669,21 @@ final class GPW_GitHub_API {
 	 * Build transient key for a repository latest release payload.
 	 *
 	 * @param string $repo_full_name Repository full name.
+	 * @param string $channel        Release channel.
 	 *
 	 * @return string
 	 */
-	private function get_release_cache_key(string $repo_full_name): string {
+	private function get_release_cache_key(string $repo_full_name, string $channel): string {
 		$normalized = strtolower(str_replace('/', '_', $repo_full_name));
 		$normalized = preg_replace('/[^a-z0-9_]/', '_', $normalized);
 
 		if (! is_string($normalized)) {
-			$normalized = md5($repo_full_name);
+			$normalized = md5($channel . ':' . $repo_full_name);
 		}
 
-		$key = self::RELEASE_CACHE_PREFIX . $normalized;
+		$key = self::RELEASE_CACHE_PREFIX . $this->normalize_release_channel($channel) . '_' . $normalized;
 		if (strlen('gpw_cache_' . $key) > 172) {
-			$key = self::RELEASE_CACHE_PREFIX . md5($repo_full_name);
+			$key = self::RELEASE_CACHE_PREFIX . md5($channel . ':' . $repo_full_name);
 		}
 
 		return $key;
