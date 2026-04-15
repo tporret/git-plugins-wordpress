@@ -62,39 +62,49 @@ final class GPW_Managed_Plugin_Registry {
 			);
 		}
 
+		return $normalized;
+	}
+
+	/**
+	 * Migrate legacy tracked repos from the old gpw_active_repos option.
+	 *
+	 * @return void
+	 */
+	public function migrate_legacy_tracked_repos(): void {
+		$normalized = $this->get_all();
 		$legacy_repos = GPW_Context::get_option(self::LEGACY_ACTIVE_REPOS_OPTION, array());
 		$did_migrate  = false;
 
-		if (is_array($legacy_repos)) {
-			foreach ($legacy_repos as $legacy_repo) {
-				if (! is_string($legacy_repo) || '' === trim($legacy_repo)) {
-					continue;
-				}
+		if (! is_array($legacy_repos)) {
+			return;
+		}
 
-				$repo_full_name = sanitize_text_field($legacy_repo);
-				if (! isset($normalized[$repo_full_name])) {
-					$normalized[$repo_full_name] = array(
-						'repo_full_name' => $repo_full_name,
-						'plugin_file'    => '',
-						'is_tracked'     => true,
-						'verification'   => $this->get_default_verification(),
-					);
-					$did_migrate = true;
-					continue;
-				}
+		foreach ($legacy_repos as $legacy_repo) {
+			if (! is_string($legacy_repo) || '' === trim($legacy_repo)) {
+				continue;
+			}
 
-				if (! $normalized[$repo_full_name]['is_tracked']) {
-					$normalized[$repo_full_name]['is_tracked'] = true;
-					$did_migrate                               = true;
-				}
+			$repo_full_name = sanitize_text_field($legacy_repo);
+			if (! isset($normalized[$repo_full_name])) {
+				$normalized[$repo_full_name] = array(
+					'repo_full_name' => $repo_full_name,
+					'plugin_file'    => '',
+					'is_tracked'     => true,
+					'verification'   => $this->get_default_verification(),
+				);
+				$did_migrate = true;
+				continue;
+			}
+
+			if (! $normalized[$repo_full_name]['is_tracked']) {
+				$normalized[$repo_full_name]['is_tracked'] = true;
+				$did_migrate                               = true;
 			}
 		}
 
 		if ($did_migrate) {
 			$this->save_all($normalized);
 		}
-
-		return $normalized;
 	}
 
 	/**

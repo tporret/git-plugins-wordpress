@@ -1,16 +1,6 @@
 import { useState, useEffect, useCallback } from '@wordpress/element';
 import { GitBranch, RefreshCw, Save } from 'lucide-react';
-
-const API_URL = window.gpwSettings?.restUrl || '/wp-json/gpw/v1';
-const NONCE = window.gpwSettings?.nonce || '';
-
-function headers(extra = {}) {
-  return {
-    'Content-Type': 'application/json',
-    'X-WP-Nonce': NONCE,
-    ...extra,
-  };
-}
+import { getPlugins, getChannels, saveChannels } from '../api';
 
 function normalizeChannel(channel) {
   return channel === 'pre-release' ? 'pre-release' : 'stable';
@@ -36,13 +26,7 @@ export default function ChannelsTab() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [pluginsResponse, channelsResponse] = await Promise.all([
-        fetch(`${API_URL}/plugins`, { headers: headers() }),
-        fetch(`${API_URL}/channels`, { headers: headers() }),
-      ]);
-
-      const pluginsData = await pluginsResponse.json();
-      const channelsData = await channelsResponse.json();
+      const [pluginsData, channelsData] = await Promise.all([getPlugins(), getChannels()]);
 
       const pluginRows = (pluginsData.plugins || []).filter(
         (plugin) => plugin.is_installed || plugin.is_tracked
@@ -85,18 +69,7 @@ export default function ChannelsTab() {
         })),
       };
 
-      const response = await fetch(`${API_URL}/channels`, {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json();
-
-      if (!response.ok) {
-        showToast(data.message || 'Failed to save release channels.', 'error');
-        return;
-      }
-
+      const data = await saveChannels(payload);
       showToast(data.message || 'Release channels saved.');
       await fetchData();
     } catch {

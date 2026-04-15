@@ -25,3 +25,4 @@ pnpm-debug.log*
 .cache/
 coverage/
 testsite.md
+.agents/

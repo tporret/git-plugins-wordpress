@@ -23,16 +23,19 @@ define('GPW_PLUGIN_FILE', __FILE__);
 define('GPW_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GPW_PLUGIN_URL', plugin_dir_url(__FILE__));
 
-require_once GPW_PLUGIN_DIR . 'includes/class-context.php';
-require_once GPW_PLUGIN_DIR . 'includes/class-encryption.php';
-require_once GPW_PLUGIN_DIR . 'includes/class-cache-manager.php';
-require_once GPW_PLUGIN_DIR . 'includes/class-channel-manager.php';
-require_once GPW_PLUGIN_DIR . 'includes/class-github-api.php';
-require_once GPW_PLUGIN_DIR . 'includes/class-managed-plugin-registry.php';
-require_once GPW_PLUGIN_DIR . 'includes/class-plugin-deployment-service.php';
-require_once GPW_PLUGIN_DIR . 'includes/class-admin-settings.php';
-require_once GPW_PLUGIN_DIR . 'includes/class-plugin-installer.php';
-require_once GPW_PLUGIN_DIR . 'includes/class-rest-api.php';
+spl_autoload_register(static function (string $class): void {
+	$class = ltrim($class, '\\');
+	if (! str_starts_with($class, 'GPW_')) {
+		return;
+	}
+
+	$file_name = 'class-' . str_replace('_', '-', strtolower(substr($class, 4))) . '.php';
+	$file_path = GPW_PLUGIN_DIR . 'includes/' . $file_name;
+
+	if (file_exists($file_path)) {
+		require_once $file_path;
+	}
+});
 
 /**
  * Main plugin bootstrap class.
@@ -114,7 +117,7 @@ final class Git_Plugins_WP {
 		$this->channel_manager           = new GPW_Channel_Manager();
 		$this->github_api                = new GPW_GitHub_API();
 		$this->managed_plugin_registry   = new GPW_Managed_Plugin_Registry();
-		$this->plugin_deployment_service = new GPW_Plugin_Deployment_Service($this->github_api, $this->managed_plugin_registry);
+		$this->plugin_deployment_service = new GPW_Plugin_Deployment_Service($this->github_api, $this->managed_plugin_registry, $this->channel_manager);
 		$this->admin_settings            = new GPW_Admin_Settings();
 		$this->plugin_installer          = new GPW_Plugin_Installer($this->plugin_deployment_service, $this->managed_plugin_registry, $this->channel_manager);
 		$this->rest_api                  = new GPW_REST_API($this->github_api, $this->managed_plugin_registry, $this->plugin_deployment_service, $this->channel_manager);
@@ -126,6 +129,7 @@ final class Git_Plugins_WP {
 	 * @return void
 	 */
 	public function init(): void {
+		$this->managed_plugin_registry->migrate_legacy_tracked_repos();
 		$this->rest_api->register_hooks();
 
 		if (is_admin()) {

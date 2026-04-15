@@ -1,17 +1,8 @@
 import { useState, useEffect, useCallback } from '@wordpress/element';
 import { Plus, Trash2, Save, RefreshCw, X } from 'lucide-react';
+import { getSettings, saveSettings } from '../api';
 
-const API_URL = window.gpwSettings?.restUrl || '/wp-json/gpw/v1';
-const NONCE = window.gpwSettings?.nonce || '';
 const APP_CONTEXT = window.gpwSettings?.context || {};
-
-function headers(extra = {}) {
-  return {
-    'Content-Type': 'application/json',
-    'X-WP-Nonce': NONCE,
-    ...extra,
-  };
-}
 
 export default function SourcesTab() {
   const [sources, setSources] = useState([]);
@@ -27,8 +18,7 @@ export default function SourcesTab() {
   }, []);
 
   useEffect(() => {
-    fetch(`${API_URL}/settings`, { headers: headers() })
-      .then((r) => r.json())
+    getSettings()
       .then((data) => {
         const s = data.sources?.length ? data.sources : [{ target: '', pat: '' }];
         setSources(s);
@@ -56,20 +46,11 @@ export default function SourcesTab() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_URL}/settings`, {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify({ sources }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showToast(data.message || 'Settings saved.');
-        setLastError('');
-      } else {
-        showToast(data.message || 'Save failed.', 'error');
-      }
-    } catch {
-      showToast('Network error.', 'error');
+      const data = await saveSettings(sources);
+      showToast(data.message || 'Settings saved.');
+      setLastError('');
+    } catch (error) {
+      showToast(error?.message || 'Save failed.', 'error');
     } finally {
       setSaving(false);
     }

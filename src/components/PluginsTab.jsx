@@ -1,17 +1,16 @@
 import { useState, useEffect, useCallback } from '@wordpress/element';
 import { Download, Trash2, RefreshCw, Package, ArrowUpCircle, X, GitBranch, Shield, ShieldCheck } from 'lucide-react';
+import {
+  getPlugins,
+  getPluginSites,
+  togglePlugin,
+  installPlugin,
+  flushCache,
+  updatePlugin,
+  uninstallPlugin,
+} from '../api';
 
-const API_URL = window.gpwSettings?.restUrl || '/wp-json/gpw/v1';
-const NONCE = window.gpwSettings?.nonce || '';
 const APP_CONTEXT = window.gpwSettings?.context || {};
-
-function headers(extra = {}) {
-  return {
-    'Content-Type': 'application/json',
-    'X-WP-Nonce': NONCE,
-    ...extra,
-  };
-}
 
 function channelLabel(channel) {
   return channel === 'pre-release' ? 'Pre-release' : 'Stable';
@@ -252,14 +251,10 @@ export default function PluginsTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/plugins`, { headers: headers() });
-      const data = await res.json();
-      if (data.message && (!data.plugins || data.plugins.length === 0)) {
-        setError(data.message);
-      }
+      const data = await getPlugins();
       setPlugins(data.plugins || []);
-    } catch {
-      setError('Failed to load plugins.');
+    } catch (error) {
+      setError(error?.message || 'Failed to load plugins.');
     } finally {
       setLoading(false);
     }
@@ -276,30 +271,18 @@ export default function PluginsTab() {
 
     setSitesModalLoading(true);
     try {
-      const params = new URLSearchParams({
-        plugin_file: plugin.plugin_file,
-        page: String(page),
-        per_page: '50',
+      const data = await getPluginSites(plugin.plugin_file, page);
+      setSitesModalDetails((prev) => {
+        if (page === 1 || !prev) {
+          return data;
+        }
+        return {
+          ...data,
+          sites: [...prev.sites, ...data.sites],
+        };
       });
-      const res = await fetch(`${API_URL}/plugins/sites?${params.toString()}`, {
-        headers: headers(),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setSitesModalDetails((prev) => {
-          if (page === 1 || !prev) {
-            return data;
-          }
-          return {
-            ...data,
-            sites: [...prev.sites, ...data.sites],
-          };
-        });
-      } else {
-        showToast(data.message || 'Failed to load site details.', 'error');
-      }
-    } catch {
-      showToast('Network error.', 'error');
+    } catch (error) {
+      showToast(error?.message || 'Failed to load site details.', 'error');
     } finally {
       setSitesModalLoading(false);
     }
@@ -329,25 +312,16 @@ export default function PluginsTab() {
     const key = `toggle-${plugin.full_name}`;
     setActionLoading((prev) => ({ ...prev, [key]: true }));
     try {
-      const res = await fetch(`${API_URL}/plugins/toggle`, {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify({ full_name: plugin.full_name }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setPlugins((prev) =>
-          prev.map((p) =>
-            p.full_name === plugin.full_name
-              ? { ...p, is_active: data.is_active, is_tracked: data.is_tracked }
-              : p
-          )
-        );
-      } else {
-        showToast(data.message || 'Toggle failed.', 'error');
-      }
-    } catch {
-      showToast('Network error.', 'error');
+      const data = await togglePlugin(plugin.full_name);
+      setPlugins((prev) =>
+        prev.map((p) =>
+          p.full_name === plugin.full_name
+            ? { ...p, is_active: data.is_active, is_tracked: data.is_tracked }
+            : p
+        )
+      );
+    } catch (error) {
+      showToast(error?.message || 'Toggle failed.', 'error');
     } finally {
       setActionLoading((prev) => ({ ...prev, [key]: false }));
     }
@@ -357,20 +331,11 @@ export default function PluginsTab() {
     const key = `install-${plugin.full_name}`;
     setActionLoading((prev) => ({ ...prev, [key]: true }));
     try {
-      const res = await fetch(`${API_URL}/plugins/install`, {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify({ full_name: plugin.full_name, channel: plugin.channel }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showToast(data.message || 'Installed.');
-        await fetchPlugins();
-      } else {
-        showToast(data.message || 'Install failed.', 'error');
-      }
-    } catch {
-      showToast('Network error.', 'error');
+      const data = await installPlugin(plugin.full_name, plugin.channel);
+      showToast(data.message || 'Installed.');
+      await fetchPlugins();
+    } catch (error) {
+      showToast(error?.message || 'Install failed.', 'error');
     } finally {
       setActionLoading((prev) => ({ ...prev, [key]: false }));
     }
@@ -379,20 +344,11 @@ export default function PluginsTab() {
   const handleForceRefresh = async () => {
     setActionLoading((prev) => ({ ...prev, 'force-refresh': true }));
     try {
-      const res = await fetch(`${API_URL}/cache/flush`, {
-        method: 'POST',
-        headers: headers(),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showToast(data.message || 'Cache cleared.');
-        // Refetch plugins immediately
-        await fetchPlugins();
-      } else {
-        showToast(data.message || 'Cache flush failed.', 'error');
-      }
-    } catch {
-      showToast('Network error.', 'error');
+      const data = await flushCache();
+      showToast(data.message || 'Cache cleared.');
+      await fetchPlugins();
+    } catch (error) {
+      showToast(error?.message || 'Cache flush failed.', 'error');
     } finally {
       setActionLoading((prev) => ({ ...prev, 'force-refresh': false }));
     }
@@ -402,24 +358,11 @@ export default function PluginsTab() {
     const key = `update-${plugin.full_name}`;
     setActionLoading((prev) => ({ ...prev, [key]: true }));
     try {
-      const res = await fetch(`${API_URL}/plugins/update`, {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify({
-          full_name: plugin.full_name,
-          plugin_file: plugin.plugin_file,
-          channel: plugin.channel,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showToast(data.message || 'Updated successfully.');
-        await fetchPlugins();
-      } else {
-        showToast(data.message || 'Update failed.', 'error');
-      }
-    } catch {
-      showToast('Network error.', 'error');
+      const data = await updatePlugin(plugin.full_name, plugin.plugin_file, plugin.channel);
+      showToast(data.message || 'Updated successfully.');
+      await fetchPlugins();
+    } catch (error) {
+      showToast(error?.message || 'Update failed.', 'error');
     } finally {
       setActionLoading((prev) => ({ ...prev, [key]: false }));
     }
@@ -432,23 +375,11 @@ export default function PluginsTab() {
     const key = `uninstall-${plugin.full_name}`;
     setActionLoading((prev) => ({ ...prev, [key]: true }));
     try {
-      const res = await fetch(`${API_URL}/plugins/uninstall`, {
-        method: 'POST',
-        headers: headers(),
-        body: JSON.stringify({
-          full_name: plugin.full_name,
-          plugin_file: plugin.plugin_file,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showToast(data.message || 'Uninstalled.');
-        await fetchPlugins();
-      } else {
-        showToast(data.message || 'Uninstall failed.', 'error');
-      }
-    } catch {
-      showToast('Network error.', 'error');
+      const data = await uninstallPlugin(plugin.full_name, plugin.plugin_file);
+      showToast(data.message || 'Uninstalled.');
+      await fetchPlugins();
+    } catch (error) {
+      showToast(error?.message || 'Uninstall failed.', 'error');
     } finally {
       setActionLoading((prev) => ({ ...prev, [key]: false }));
     }

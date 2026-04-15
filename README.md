@@ -95,6 +95,8 @@ Recommended PAT permissions:
 - React + Tailwind admin SPA built via `@wordpress/scripts`
 - Main entry point: `git-plugins-wordpress.php`
 - Core classes are in `includes/`
+- The plugin uses a lightweight class autoloader for `GPW_` classes and preserves normal admin bootstrap behavior for both HTTP and WP-CLI contexts.
+- Legacy single-source settings are migrated once during admin initialization into the new multi-source format, with PAT encryption and no plaintext upgrade path.
 
 ## License
 

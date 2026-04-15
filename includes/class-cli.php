@@ -59,7 +59,7 @@ final class GPW_CLI {
 		$this->github_api         = new GPW_GitHub_API();
 		$this->channel_manager    = new GPW_Channel_Manager();
 		$this->registry           = new GPW_Managed_Plugin_Registry();
-		$this->deployment_service = new GPW_Plugin_Deployment_Service($this->github_api, $this->registry);
+		$this->deployment_service = new GPW_Plugin_Deployment_Service($this->github_api, $this->registry, $this->channel_manager);
 		$this->rest_api           = new GPW_REST_API($this->github_api, $this->registry, $this->deployment_service, $this->channel_manager);
 	}
 

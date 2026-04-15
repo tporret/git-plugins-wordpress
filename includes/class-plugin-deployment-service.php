@@ -27,14 +27,23 @@ final class GPW_Plugin_Deployment_Service {
 	private GPW_Managed_Plugin_Registry $registry;
 
 	/**
+	 * Release channel manager.
+	 *
+	 * @var GPW_Channel_Manager
+	 */
+	private GPW_Channel_Manager $channel_manager;
+
+	/**
 	 * Constructor.
 	 *
-	 * @param GPW_GitHub_API               $github_api GitHub API wrapper.
-	 * @param GPW_Managed_Plugin_Registry  $registry   Managed plugin registry.
+	 * @param GPW_GitHub_API               $github_api      GitHub API wrapper.
+	 * @param GPW_Managed_Plugin_Registry  $registry        Managed plugin registry.
+	 * @param GPW_Channel_Manager          $channel_manager Release channel manager.
 	 */
-	public function __construct(GPW_GitHub_API $github_api, GPW_Managed_Plugin_Registry $registry) {
-		$this->github_api = $github_api;
-		$this->registry   = $registry;
+	public function __construct(GPW_GitHub_API $github_api, GPW_Managed_Plugin_Registry $registry, GPW_Channel_Manager $channel_manager) {
+		$this->github_api      = $github_api;
+		$this->registry        = $registry;
+		$this->channel_manager = $channel_manager;
 	}
 
 	/**
@@ -47,17 +56,12 @@ final class GPW_Plugin_Deployment_Service {
 	 */
 	public function install_repository(string $repo_full_name, string $channel = GPW_Channel_Manager::CHANNEL_STABLE) {
 		$repo_full_name = sanitize_text_field($repo_full_name);
-		$channel        = (new GPW_Channel_Manager())->normalize_channel($channel);
+		$channel        = $this->normalize_channel($channel);
 		if ('' === $repo_full_name) {
 			return new WP_Error('gpw_missing_repo_name', __('Repository name is required.', 'git-plugins-wordpress'));
 		}
 
 		$this->load_wordpress_upgrade_dependencies();
-
-		$release = $this->github_api->get_latest_release($repo_full_name, true, $channel);
-		if (is_wp_error($release)) {
-			return $release;
-		}
 
 		$permissions_error = $this->get_plugins_directory_permissions_error_message();
 		if ('' !== $permissions_error) {
@@ -65,12 +69,13 @@ final class GPW_Plugin_Deployment_Service {
 		}
 
 		$installed_before   = get_plugins();
-		$downloaded_package = $this->download_and_verify_package($release, $repo_full_name);
+		$downloaded_package = $this->prepare_release_package($repo_full_name, $channel);
 		if (is_wp_error($downloaded_package)) {
 			return $downloaded_package;
 		}
 		$package_path = $downloaded_package['package_path'];
 		$verification = $downloaded_package['verification'];
+		$release      = $downloaded_package['release'];
 
 		$skin     = new Automatic_Upgrader_Skin();
 		$upgrader = new Plugin_Upgrader($skin);
@@ -117,7 +122,7 @@ final class GPW_Plugin_Deployment_Service {
 	public function update_repository(string $repo_full_name, string $plugin_file, string $channel = GPW_Channel_Manager::CHANNEL_STABLE) {
 		$repo_full_name = sanitize_text_field($repo_full_name);
 		$plugin_file    = sanitize_text_field($plugin_file);
-		$channel        = (new GPW_Channel_Manager())->normalize_channel($channel);
+		$channel        = $this->normalize_channel($channel);
 
 		if ('' === $repo_full_name || '' === $plugin_file) {
 			return new WP_Error('gpw_missing_update_params', __('Required parameters are missing.', 'git-plugins-wordpress'));
@@ -130,9 +135,9 @@ final class GPW_Plugin_Deployment_Service {
 			return new WP_Error('gpw_plugin_not_installed', __('Plugin is not installed.', 'git-plugins-wordpress'));
 		}
 
-		$release = $this->github_api->get_latest_release($repo_full_name, true, $channel);
-		if (is_wp_error($release)) {
-			return $release;
+		$downloaded_package = $this->prepare_release_package($repo_full_name, $channel);
+		if (is_wp_error($downloaded_package)) {
+			return $downloaded_package;
 		}
 
 		$permissions_error = $this->get_plugin_update_permissions_error_message($plugin_file);
@@ -140,12 +145,9 @@ final class GPW_Plugin_Deployment_Service {
 			return new WP_Error('gpw_plugin_not_writable', $permissions_error);
 		}
 
-		$downloaded_package = $this->download_and_verify_package($release, $repo_full_name);
-		if (is_wp_error($downloaded_package)) {
-			return $downloaded_package;
-		}
 		$package_path = $downloaded_package['package_path'];
 		$verification = $downloaded_package['verification'];
+		$release      = $downloaded_package['release'];
 
 		$was_network_active = is_multisite() && is_plugin_active_for_network($plugin_file);
 		$was_site_active    = is_plugin_active($plugin_file);
@@ -190,6 +192,50 @@ final class GPW_Plugin_Deployment_Service {
 			'plugin_file' => '' !== $resolved_plugin_file ? $resolved_plugin_file : $plugin_file,
 			'release'     => $release,
 			'verification' => $verification,
+		);
+	}
+
+	/**
+	 * Normalize a release channel using the shared channel manager.
+	 *
+	 * @param string $channel Release channel.
+	 *
+	 * @return string
+	 */
+	private function normalize_channel(string $channel): string {
+		return $this->channel_manager->normalize_channel($channel);
+	}
+
+	/**
+	 * Prepare a verified release package for installation or update.
+	 *
+	 * @param string $repo_full_name Repository full name.
+	 * @param string $channel        Release channel.
+	 *
+	 * @return array<string, mixed>|WP_Error
+	 */
+	private function prepare_release_package(string $repo_full_name, string $channel) {
+		$repo_full_name = sanitize_text_field($repo_full_name);
+		$channel        = $this->normalize_channel($channel);
+
+		if ('' === $repo_full_name) {
+			return new WP_Error('gpw_missing_repo_name', __('Repository name is required.', 'git-plugins-wordpress'));
+		}
+
+		$release = $this->github_api->get_latest_release($repo_full_name, true, $channel);
+		if (is_wp_error($release)) {
+			return $release;
+		}
+
+		$downloaded_package = $this->download_and_verify_package($release, $repo_full_name);
+		if (is_wp_error($downloaded_package)) {
+			return $downloaded_package;
+		}
+
+		return array(
+			'release'      => $release,
+			'package_path' => $downloaded_package['package_path'],
+			'verification' => $downloaded_package['verification'],
 		);
 	}
 
