@@ -13,6 +13,7 @@ postcss.config.js
 tailwind.config.js
 webpack.config.js
 .distignore
+skills-lock.json
 .env
 .env.*
 .cache/

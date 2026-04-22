@@ -13,11 +13,6 @@ defined('ABSPATH') || exit;
  */
 final class GPW_Plugin_Installer {
 	/**
-	 * Redirect page slug after actions.
-	 */
-	private const REDIRECT_PAGE = 'gpw-settings';
-
-	/**
 	 * Shared plugin deployment service.
 	 *
 	 * @var GPW_Plugin_Deployment_Service
@@ -89,7 +84,7 @@ final class GPW_Plugin_Installer {
 		wp_safe_redirect(
 			add_query_arg(
 				array(
-					'page'       => self::REDIRECT_PAGE,
+					'page'       => GPW_Context::PAGE_SLUG,
 					'gpw_notice' => 'install-success',
 				),
 				$this->get_redirect_base_url()
@@ -115,7 +110,7 @@ final class GPW_Plugin_Installer {
 			wp_safe_redirect(
 				add_query_arg(
 					array(
-						'page'       => self::REDIRECT_PAGE,
+						'page'       => GPW_Context::PAGE_SLUG,
 						'gpw_notice' => 'uninstall-failed',
 						'message'    => sanitize_text_field(__('Required parameters are missing.', 'git-plugins-wordpress')),
 					),
@@ -146,7 +141,7 @@ final class GPW_Plugin_Installer {
 			wp_safe_redirect(
 				add_query_arg(
 					array(
-						'page'       => self::REDIRECT_PAGE,
+						'page'       => GPW_Context::PAGE_SLUG,
 						'gpw_notice' => 'uninstall-failed',
 						'message'    => sanitize_text_field(__('Plugin is not installed.', 'git-plugins-wordpress')),
 					),
@@ -168,7 +163,7 @@ final class GPW_Plugin_Installer {
 			wp_safe_redirect(
 				add_query_arg(
 					array(
-						'page'       => self::REDIRECT_PAGE,
+						'page'       => GPW_Context::PAGE_SLUG,
 						'gpw_notice' => 'uninstall-failed',
 						'message'    => sanitize_text_field($deleted->get_error_message()),
 					),
@@ -184,7 +179,7 @@ final class GPW_Plugin_Installer {
 		wp_safe_redirect(
 			add_query_arg(
 				array(
-					'page'       => self::REDIRECT_PAGE,
+					'page'       => GPW_Context::PAGE_SLUG,
 					'gpw_notice' => 'uninstall-success',
 				),
 				$this->get_redirect_base_url()
@@ -204,7 +199,7 @@ final class GPW_Plugin_Installer {
 		wp_safe_redirect(
 			add_query_arg(
 				array(
-					'page'       => self::REDIRECT_PAGE,
+					'page'       => GPW_Context::PAGE_SLUG,
 					'gpw_notice' => 'install-failed',
 					'message'    => sanitize_text_field($message),
 				),

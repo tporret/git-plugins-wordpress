@@ -45,6 +45,11 @@ final class GPW_GitHub_API {
 	private const API_BASE = 'https://api.github.com';
 
 	/**
+	 * HTTP timeout for GitHub API requests.
+	 */
+	private const REQUEST_TIMEOUT = 20;
+
+	/**
 	 * Stable release channel.
 	 */
 	private const CHANNEL_STABLE = GPW_Channel_Manager::CHANNEL_STABLE;
@@ -155,7 +160,6 @@ final class GPW_GitHub_API {
 	 */
 	public function flush_cache(): void {
 		GPW_Cache_Manager::flush_all();
-		GPW_Context::delete_option('gpw_release_cache_keys');
 	}
 
 	/**
@@ -226,7 +230,7 @@ final class GPW_GitHub_API {
 			$url,
 			array(
 				'headers' => $headers,
-				'timeout' => 20,
+				'timeout' => self::REQUEST_TIMEOUT,
 			)
 		);
 
@@ -318,7 +322,7 @@ final class GPW_GitHub_API {
 			$url,
 			array(
 				'headers' => $headers,
-				'timeout' => 20,
+				'timeout' => self::REQUEST_TIMEOUT,
 			)
 		);
 
@@ -415,19 +419,6 @@ final class GPW_GitHub_API {
 	}
 
 	/**
-	 * Normalize release channel values.
-	 *
-	 * @param string $channel Channel name.
-	 *
-	 * @return string
-	 */
-	private function normalize_release_channel(string $channel): string {
-		$channel = strtolower(trim($channel));
-
-		return self::CHANNEL_PRERELEASE === $channel ? self::CHANNEL_PRERELEASE : self::CHANNEL_STABLE;
-	}
-
-	/**
 	 * Get configured GitHub Personal Access Token for a given repository.
 	 *
 	 * Matches the repo owner against configured sources to find the right PAT.
@@ -438,24 +429,6 @@ final class GPW_GitHub_API {
 	 */
 	public function get_auth_token_for_repo(string $repo_full_name): string {
 		return $this->get_token_for_repo($repo_full_name);
-	}
-
-	/**
-	 * Get the first available auth token across all sources.
-	 *
-	 * @deprecated Use get_auth_token_for_repo() for per-repo token resolution.
-	 *
-	 * @return string
-	 */
-	public function get_auth_token(): string {
-		$sources = $this->get_sources();
-		foreach ($sources as $source) {
-			if ('' !== $source['pat']) {
-				return $source['pat'];
-			}
-		}
-
-		return '';
 	}
 
 	/**
@@ -513,7 +486,7 @@ final class GPW_GitHub_API {
 			$url,
 			array(
 				'headers' => $headers,
-				'timeout' => 20,
+				'timeout' => self::REQUEST_TIMEOUT,
 			)
 		);
 
@@ -593,8 +566,14 @@ final class GPW_GitHub_API {
 				if ('' !== $target) {
 					// Decrypt PAT if encrypted.
 					if ('' !== $pat && GPW_Encryption::is_encrypted($pat)) {
-						$pat = GPW_Encryption::decrypt($pat);
+						$decrypted_pat = GPW_Encryption::decrypt_or_error($pat);
+						$pat           = is_wp_error($decrypted_pat) ? '' : $decrypted_pat;
 					}
+
+					if ('' !== $pat && ! self::is_supported_auth_token($pat)) {
+						$pat = '';
+					}
+
 					$sources[] = array('target' => $target, 'pat' => $pat);
 				}
 			}
@@ -674,19 +653,29 @@ final class GPW_GitHub_API {
 	 * @return string
 	 */
 	private function get_release_cache_key(string $repo_full_name, string $channel): string {
-		$normalized = strtolower(str_replace('/', '_', $repo_full_name));
-		$normalized = preg_replace('/[^a-z0-9_]/', '_', $normalized);
+		return self::RELEASE_CACHE_PREFIX . $this->normalize_release_channel($channel) . '_' . md5($channel . ':' . $repo_full_name);
+	}
 
-		if (! is_string($normalized)) {
-			$normalized = md5($channel . ':' . $repo_full_name);
-		}
+	/**
+	 * Normalize release channel values.
+	 *
+	 * @param string $channel Channel name.
+	 *
+	 * @return string
+	 */
+	private function normalize_release_channel(string $channel): string {
+		return (new GPW_Channel_Manager())->normalize_channel($channel);
+	}
 
-		$key = self::RELEASE_CACHE_PREFIX . $this->normalize_release_channel($channel) . '_' . $normalized;
-		if (strlen('gpw_cache_' . $key) > 172) {
-			$key = self::RELEASE_CACHE_PREFIX . md5($channel . ':' . $repo_full_name);
-		}
-
-		return $key;
+	/**
+	 * Check whether a GitHub auth token matches a supported format.
+	 *
+	 * @param string $token GitHub auth token.
+	 *
+	 * @return bool
+	 */
+	public static function is_supported_auth_token(string $token): bool {
+		return 1 === preg_match('/^(gh[a-z]{1,3}_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255}|[a-f0-9]{40})$/', trim($token));
 	}
 
 	/**

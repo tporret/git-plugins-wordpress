@@ -100,6 +100,12 @@ final class GPW_REST_API {
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array($this, 'save_settings'),
 				'permission_callback' => array($this, 'check_admin_permission'),
+				'args'                => array(
+					'sources' => array(
+						'required'          => true,
+						'validate_callback' => array($this, 'validate_sources_param'),
+					),
+				),
 			),
 		));
 
@@ -113,6 +119,11 @@ final class GPW_REST_API {
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array($this, 'save_channels'),
 				'permission_callback' => array($this, 'check_admin_permission'),
+				'args'                => array(
+					'default_channel' => array(
+						'validate_callback' => array($this, 'validate_channel_param'),
+					),
+				),
 			),
 		));
 
@@ -126,30 +137,80 @@ final class GPW_REST_API {
 			'methods'             => WP_REST_Server::READABLE,
 			'callback'            => array($this, 'get_plugin_sites'),
 			'permission_callback' => array($this, 'check_admin_permission'),
+			'args'                => array(
+				'plugin_file' => array(
+					'required'          => true,
+					'validate_callback' => array($this, 'validate_plugin_file_param'),
+				),
+				'page' => array(
+					'validate_callback' => array($this, 'validate_page_param'),
+				),
+				'per_page' => array(
+					'validate_callback' => array($this, 'validate_per_page_param'),
+				),
+			),
 		));
 
 		register_rest_route(self::NAMESPACE, '/plugins/toggle', array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => array($this, 'toggle_plugin'),
 			'permission_callback' => array($this, 'check_admin_permission'),
+			'args'                => array(
+				'full_name' => array(
+					'required'          => true,
+					'validate_callback' => array($this, 'validate_repo_full_name_param'),
+				),
+			),
 		));
 
 		register_rest_route(self::NAMESPACE, '/plugins/install', array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => array($this, 'install_plugin'),
 			'permission_callback' => array($this, 'check_admin_permission'),
+			'args'                => array(
+				'full_name' => array(
+					'required'          => true,
+					'validate_callback' => array($this, 'validate_repo_full_name_param'),
+				),
+				'channel' => array(
+					'validate_callback' => array($this, 'validate_channel_param'),
+				),
+			),
 		));
 
 		register_rest_route(self::NAMESPACE, '/plugins/uninstall', array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => array($this, 'uninstall_plugin'),
 			'permission_callback' => array($this, 'check_admin_permission'),
+			'args'                => array(
+				'full_name' => array(
+					'required'          => true,
+					'validate_callback' => array($this, 'validate_repo_full_name_param'),
+				),
+				'plugin_file' => array(
+					'required'          => true,
+					'validate_callback' => array($this, 'validate_plugin_file_param'),
+				),
+			),
 		));
 
 		register_rest_route(self::NAMESPACE, '/plugins/update', array(
 			'methods'             => WP_REST_Server::CREATABLE,
 			'callback'            => array($this, 'update_plugin'),
 			'permission_callback' => array($this, 'check_admin_permission'),
+			'args'                => array(
+				'full_name' => array(
+					'required'          => true,
+					'validate_callback' => array($this, 'validate_repo_full_name_param'),
+				),
+				'plugin_file' => array(
+					'required'          => true,
+					'validate_callback' => array($this, 'validate_plugin_file_param'),
+				),
+				'channel' => array(
+					'validate_callback' => array($this, 'validate_channel_param'),
+				),
+			),
 		));
 
 		register_rest_route(self::NAMESPACE, '/cache/flush', array(
@@ -200,7 +261,11 @@ final class GPW_REST_API {
 				}
 				// Decrypt PAT if encrypted, then mask it for display.
 				if ('' !== $pat && GPW_Encryption::is_encrypted($pat)) {
-					$pat = GPW_Encryption::decrypt($pat);
+					$decrypted_pat = GPW_Encryption::decrypt_or_error($pat);
+					$pat           = is_wp_error($decrypted_pat) ? '' : $decrypted_pat;
+				}
+				if ('' !== $pat && ! GPW_GitHub_API::is_supported_auth_token($pat)) {
+					$pat = '';
 				}
 				$sources[] = array(
 					'target' => $target,
@@ -256,8 +321,7 @@ final class GPW_REST_API {
 			if (preg_match('/^[•]+$/', $pat) && isset($old_sources[$index]['pat'])) {
 				$pat = (string) $old_sources[$index]['pat'];
 			} elseif ('' !== $pat) {
-				// Validate PAT format: GitHub classic (ghp_), fine-grained (github_pat_), or legacy alphanumeric.
-				if (! preg_match('/^(ghp_[a-zA-Z0-9]{36,255}|github_pat_[a-zA-Z0-9_]{22,255}|[a-f0-9]{40})$/', $pat)) {
+				if (! GPW_GitHub_API::is_supported_auth_token($pat)) {
 					return new WP_REST_Response(
 						array('message' => sprintf(
 							/* translators: %d: source row number */
@@ -772,6 +836,124 @@ final class GPW_REST_API {
 		wp_clean_plugins_cache(true);
 
 		return new WP_REST_Response(array('message' => __('GitHub cache cleared. Plugins will refresh on next load.', 'git-plugins-wordpress')), 200);
+	}
+
+	/**
+	 * Validate the sources payload for the settings endpoint.
+	 *
+	 * @param mixed           $value   Request parameter value.
+	 * @param WP_REST_Request $request Request object.
+	 * @param string          $param   Parameter name.
+	 *
+	 * @return bool|WP_Error
+	 */
+	public function validate_sources_param($value, WP_REST_Request $request, string $param) {
+		unset($request, $param);
+
+		if (is_array($value)) {
+			return true;
+		}
+
+		return new WP_Error('rest_invalid_param', __('Sources must be an array.', 'git-plugins-wordpress'), array('status' => 400));
+	}
+
+	/**
+	 * Validate repository full-name request parameters.
+	 *
+	 * @param mixed           $value   Request parameter value.
+	 * @param WP_REST_Request $request Request object.
+	 * @param string          $param   Parameter name.
+	 *
+	 * @return bool|WP_Error
+	 */
+	public function validate_repo_full_name_param($value, WP_REST_Request $request, string $param) {
+		unset($request);
+
+		if (is_string($value) && '' !== sanitize_text_field($value) && str_contains($value, '/')) {
+			return true;
+		}
+
+		return new WP_Error('rest_invalid_param', sprintf(__('Parameter "%s" must be in owner/repo format.', 'git-plugins-wordpress'), $param), array('status' => 400));
+	}
+
+	/**
+	 * Validate plugin file request parameters.
+	 *
+	 * @param mixed           $value   Request parameter value.
+	 * @param WP_REST_Request $request Request object.
+	 * @param string          $param   Parameter name.
+	 *
+	 * @return bool|WP_Error
+	 */
+	public function validate_plugin_file_param($value, WP_REST_Request $request, string $param) {
+		unset($request);
+
+		if (is_string($value) && '' !== sanitize_text_field($value)) {
+			return true;
+		}
+
+		return new WP_Error('rest_invalid_param', sprintf(__('Parameter "%s" is required.', 'git-plugins-wordpress'), $param), array('status' => 400));
+	}
+
+	/**
+	 * Validate release-channel request parameters.
+	 *
+	 * @param mixed           $value   Request parameter value.
+	 * @param WP_REST_Request $request Request object.
+	 * @param string          $param   Parameter name.
+	 *
+	 * @return bool|WP_Error
+	 */
+	public function validate_channel_param($value, WP_REST_Request $request, string $param) {
+		unset($request, $param);
+
+		if (null === $value || '' === $value) {
+			return true;
+		}
+
+		if (is_string($value) && $this->channel_manager->normalize_channel($value) === strtolower(trim($value))) {
+			return true;
+		}
+
+		return new WP_Error('rest_invalid_param', __('Channel must be stable or pre-release.', 'git-plugins-wordpress'), array('status' => 400));
+	}
+
+	/**
+	 * Validate page request parameters.
+	 *
+	 * @param mixed           $value   Request parameter value.
+	 * @param WP_REST_Request $request Request object.
+	 * @param string          $param   Parameter name.
+	 *
+	 * @return bool|WP_Error
+	 */
+	public function validate_page_param($value, WP_REST_Request $request, string $param) {
+		unset($request);
+
+		if (null === $value || (is_numeric($value) && (int) $value >= 1)) {
+			return true;
+		}
+
+		return new WP_Error('rest_invalid_param', sprintf(__('Parameter "%s" must be at least 1.', 'git-plugins-wordpress'), $param), array('status' => 400));
+	}
+
+	/**
+	 * Validate per-page request parameters.
+	 *
+	 * @param mixed           $value   Request parameter value.
+	 * @param WP_REST_Request $request Request object.
+	 * @param string          $param   Parameter name.
+	 *
+	 * @return bool|WP_Error
+	 */
+	public function validate_per_page_param($value, WP_REST_Request $request, string $param) {
+		unset($request);
+
+		if (null === $value || (is_numeric($value) && (int) $value >= 1 && (int) $value <= 100)) {
+			return true;
+		}
+
+		return new WP_Error('rest_invalid_param', sprintf(__('Parameter "%s" must be between 1 and 100.', 'git-plugins-wordpress'), $param), array('status' => 400));
 	}
 
 	/**

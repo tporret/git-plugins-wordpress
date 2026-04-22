@@ -117,6 +117,19 @@ final class GPW_Encryption {
 	 * @return string Decrypted plaintext, or empty string if decryption fails.
 	 */
 	public static function decrypt(string $ciphertext): string {
+		$decrypted = self::decrypt_or_error($ciphertext);
+
+		return is_wp_error($decrypted) ? '' : $decrypted;
+	}
+
+	/**
+	 * Decrypt a string encrypted with encrypt() and preserve decryption failures.
+	 *
+	 * @param string $ciphertext The base64-encoded encrypted string with IV+tag prepended.
+	 *
+	 * @return string|WP_Error
+	 */
+	public static function decrypt_or_error(string $ciphertext) {
 		if (! self::is_available()) {
 			return $ciphertext;
 		}
@@ -129,12 +142,18 @@ final class GPW_Encryption {
 		$payload    = base64_decode($ciphertext, true);
 
 		if (false === $payload) {
-			return '';
+			return new WP_Error(
+				'gpw_encryption_invalid_payload',
+				__('Stored encrypted data could not be decoded.', 'git-plugins-wordpress')
+			);
 		}
 
 		$payload_len = strlen($payload);
 		if ($payload_len < self::IV_LENGTH + self::TAG_LENGTH) {
-			return '';
+			return new WP_Error(
+				'gpw_encryption_invalid_payload',
+				__('Stored encrypted data is incomplete.', 'git-plugins-wordpress')
+			);
 		}
 
 		$iv        = substr($payload, 0, self::IV_LENGTH);
@@ -151,7 +170,14 @@ final class GPW_Encryption {
 			$tag
 		);
 
-		return false === $decrypted ? '' : $decrypted;
+		if (false === $decrypted) {
+			return new WP_Error(
+				'gpw_encryption_decrypt_failed',
+				__('Stored encrypted data could not be decrypted.', 'git-plugins-wordpress')
+			);
+		}
+
+		return $decrypted;
 	}
 
 	/**
@@ -211,7 +237,11 @@ final class GPW_Encryption {
 			return null;
 		}
 
-		$decrypted = self::decrypt($sentinel);
+		$decrypted = self::decrypt_or_error($sentinel);
+		if (is_wp_error($decrypted)) {
+			return false;
+		}
+
 		return self::SENTINEL_PLAINTEXT === $decrypted;
 	}
 }

@@ -39,8 +39,11 @@ Core capabilities:
 
 Security highlights:
 - PATs are encrypted before persistence and decrypted only for outbound GitHub calls
+- Supported token formats include classic `ghp_`, fine-grained `github_pat_`, and current GitHub `gh*` token prefixes
+- Stored encrypted PATs that fail decryption or validation are ignored instead of being reused for outbound requests
 - Release ZIP archives are SHA-256 verified against published `.sha256` assets before extraction
 - Settings endpoints are protected by WordPress capability checks
+- Settings and plugin action routes validate repository identifiers, plugin files, channel values, and multisite pagination inputs before execution
 - GitHub authorization headers are scoped to approved GitHub hosts
 - Encryption sentinel checks detect salt/key rotation and prompt PAT re-entry when needed
 
@@ -71,6 +74,9 @@ The Available Plugins screen now includes a Sites column for super admins. It sh
 
 = What PAT permissions are recommended? =
 Fine-grained PAT with `Contents` read-only is recommended. For classic tokens, use `public_repo` for public repos, or `repo` only when private repository access is required.
+
+= What token formats are accepted? =
+The plugin accepts classic PATs such as `ghp_...`, fine-grained PATs such as `github_pat_...`, and current GitHub `gh*` token prefixes used by newer tokens.
 
 = What release assets are accepted? =
 Only `.zip` release assets with `application/zip` content type are accepted for installs and updates.

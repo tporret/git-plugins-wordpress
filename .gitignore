@@ -24,5 +24,6 @@ pnpm-debug.log*
 # Build/cache artifacts
 .cache/
 coverage/
+skills-lock.json
 testsite.md
 .agents/

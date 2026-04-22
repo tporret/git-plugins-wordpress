@@ -51,8 +51,11 @@ For a repo to appear and work correctly:
 - PAT values are encrypted at rest using OpenSSL AES-256-GCM
 - PATs are never returned by the settings API; saved tokens are masked in UI
 - Saved PAT fields are locked in UI until explicitly cleared for replacement
+- Supported token formats include classic `ghp_`, fine-grained `github_pat_`, and current GitHub `gh*` token prefixes
+- Stored encrypted PATs that fail decryption or validation are ignored instead of being reused for outbound requests
 - Release ZIP assets are verified against published SHA-256 sidecar checksum files before extraction
 - REST endpoints require admin capabilities (`manage_options`, plus install/delete plugin capabilities where appropriate)
+- REST routes validate repository identifiers, plugin files, channel values, and multisite pagination inputs before plugin actions run
 - GitHub auth headers are only injected for approved GitHub hosts during download flows
 - Encryption key-rotation detection alerts admins if WordPress salts changed and PATs must be re-entered
 
@@ -60,6 +63,12 @@ Recommended PAT permissions:
 
 - Fine-grained PAT: `Contents` read-only
 - Classic PAT: `public_repo` for public repos, or `repo` if private repos are needed
+
+Accepted PAT formats:
+
+- Classic PATs such as `ghp_...`
+- Fine-grained PATs such as `github_pat_...`
+- Other current GitHub `gh*` token prefixes supported by the CLI and settings validation
 
 ## Update Flow
 

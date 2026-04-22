@@ -646,7 +646,8 @@ final class GPW_CLI {
 			}
 
 			if ('' !== $pat && GPW_Encryption::is_encrypted($pat)) {
-				$pat = GPW_Encryption::decrypt($pat);
+				$decrypted_pat = GPW_Encryption::decrypt_or_error($pat);
+				$pat           = is_wp_error($decrypted_pat) ? '' : $decrypted_pat;
 			}
 
 			$sources[] = array(
@@ -799,7 +800,7 @@ final class GPW_CLI {
 	 * @return void
 	 */
 	private function assert_valid_pat(string $pat): void {
-		if (! preg_match('/^(ghp_[a-zA-Z0-9]{36,255}|github_pat_[a-zA-Z0-9_]{22,255}|[a-f0-9]{40})$/', $pat)) {
+		if (! GPW_GitHub_API::is_supported_auth_token($pat)) {
 			WP_CLI::error('Invalid PAT format. Expected a GitHub personal access token.');
 		}
 	}
