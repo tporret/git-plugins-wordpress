@@ -13,6 +13,7 @@ Connect GitHub repositories and distribute WordPress plugins through GitHub Rele
 - Shows a multisite Sites summary with on-demand subsite activation details
 - Installs plugins using WordPress native upgrader APIs
 - Injects updates into WordPress core plugin update checks
+- Lets Git Repos Manager manage its own verified release updates after a manual install
 - Exposes WP-CLI commands for source, channel, cache, and plugin deployment workflows
 - Supports authenticated downloads for private repos via GitHub PAT
 - Exposes secured admin REST endpoints for settings, plugin actions, and cache refresh
@@ -74,6 +75,8 @@ Accepted PAT formats:
 
 - Active repositories are checked against their latest GitHub release
 - Release checks respect the configured stable or pre-release channel for each managed plugin
+- Git Repos Manager can update itself from a verified release package even when the current copy was installed manually
+- Manual install adoption is limited to Git Repos Manager itself; other manually installed plugins must already be managed before GitHub release updates are allowed
 - If release version is newer than the installed plugin version, WordPress shows an update notification
 - Plugin details modal is populated from release metadata and release notes
 - On multisite, super admins can review per-plugin subsite activation coverage without leaving the Available Plugins screen
@@ -100,7 +103,7 @@ Accepted PAT formats:
 ## Development Notes
 
 - PHP 8.1+
-- WordPress 6.0+
+- WordPress 6.0+; tested up to WordPress 7.0
 - React + Tailwind admin SPA built via `@wordpress/scripts`
 - Main entry point: `git-plugins-wordpress.php`
 - Core classes are in `includes/`

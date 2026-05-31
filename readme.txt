@@ -3,9 +3,9 @@ Contributors: tporret
 Donate link: http://porretto.com/donate
 Tags: github, plugin-updates, deployment
 Requires at least: 6.0
-Tested up to: 6.9
+Tested up to: 7.0
 Requires PHP: 8.1
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -33,6 +33,7 @@ Core capabilities:
 - Repository filtering by `wp-plugin` topic
 - Native plugin installation through WordPress upgrader
 - WordPress update integration for active repositories
+- Self-management support so this plugin can adopt a manual install after a verified package update
 - WP-CLI commands for source, channel, cache, install, update, and uninstall workflows
 - Plugin install/uninstall and active toggle controls from the admin UI
 - Caching controls including refresh and force cache flush
@@ -92,6 +93,11 @@ Managed installs and updates download the release ZIP together with its matching
 
 == Changelog ==
 
+= 1.3.0 =
+* Added self-management support for Git Repos Manager so a manually installed copy can update itself from a verified release package and record verification from that point forward.
+* Limited manual install adoption to this plugin only; other manually installed plugins must already be managed before GitHub release updates are allowed.
+* Confirmed compatibility through WordPress 7.0.
+
 = 1.2.0 =
 * Added release channel management with default and per-plugin stable or pre-release selection.
 * Added WP-CLI support for sources, channels, cache flushing, and plugin deployment workflows.
@@ -129,6 +135,9 @@ Managed installs and updates download the release ZIP together with its matching
 * Hardened token header scoping and key-rotation detection.
 
 == Upgrade Notice ==
+
+= 1.3.0 =
+Adds verified self-update adoption for Git Repos Manager manual installs and WordPress 7.0 compatibility metadata.
 
 = 1.2.0 =
 Adds release channels, WP-CLI administration, and SHA-256 verified managed installs and updates.

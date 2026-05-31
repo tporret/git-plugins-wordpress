@@ -3,7 +3,7 @@ declare(strict_types=1);
 /**
  * Plugin Name:       Git Repos Manager
  * Description:       Connect GitHub repositories and distribute WordPress extensions via Release assets.
- * Version:           1.2.0
+ * Version:           1.3.0
  * Author:            tporret
  * Plugin URI:        https://porretto.com/github-wordpress-plugin-manager/
  * Text Domain:       git-plugins-wordpress
@@ -18,10 +18,11 @@ declare(strict_types=1);
 
 defined('ABSPATH') || exit;
 
-define('GPW_VERSION', '1.2.0');
+define('GPW_VERSION', '1.3.0');
 define('GPW_PLUGIN_FILE', __FILE__);
 define('GPW_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GPW_PLUGIN_URL', plugin_dir_url(__FILE__));
+define('GPW_SELF_REPO_FULL_NAME', 'tporret/git-plugins-wordpress');
 
 spl_autoload_register(static function (string $class): void {
 	$class = ltrim($class, '\\');

@@ -442,11 +442,10 @@ final class GPW_REST_API {
 		$repositories = $this->github_api->get_repositories();
 
 		if (is_wp_error($repositories)) {
-			return new WP_REST_Response(
-				array('message' => $repositories->get_error_message(), 'plugins' => array()),
-				200
-			);
+			$repositories = array();
 		}
+
+		$repositories = $this->include_self_repository($repositories);
 
 		if (! function_exists('get_plugins')) {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -466,6 +465,7 @@ final class GPW_REST_API {
 			$repo_name      = isset($repository['name']) ? sanitize_text_field((string) $repository['name']) : '';
 			$repo_full_name = isset($repository['full_name']) ? sanitize_text_field((string) $repository['full_name']) : '';
 			$description    = isset($repository['description']) ? sanitize_text_field((string) $repository['description']) : '';
+			$is_self        = defined('GPW_SELF_REPO_FULL_NAME') && GPW_SELF_REPO_FULL_NAME === $repo_full_name;
 			$managed_record = $managed_plugins[$repo_full_name] ?? null;
 			$verification   = '' !== $repo_full_name ? $this->registry->get_verification($repo_full_name) : array(
 				'status'          => GPW_Managed_Plugin_Registry::VERIFICATION_UNKNOWN,
@@ -488,7 +488,7 @@ final class GPW_REST_API {
 			if ('' !== $plugin_file && ! array_key_exists($plugin_file, $installed_plugins)) {
 				$plugin_file = '';
 			}
-			if ('' === $plugin_file) {
+			if ('' === $plugin_file && ($is_self || is_array($managed_record))) {
 				$plugin_file = $this->registry->find_plugin_file_by_repo_name($repo_name, $installed_plugins);
 			}
 			$is_installed      = '' !== $plugin_file;
@@ -528,6 +528,7 @@ final class GPW_REST_API {
 				'version'           => $version,
 				'installed_version' => $installed_version,
 				'is_installed'      => $is_installed,
+				'is_self'           => $is_self,
 				'is_active'         => $is_tracked,
 				'is_tracked'        => $is_tracked,
 				'is_site_active'    => $is_site_active,
@@ -542,6 +543,42 @@ final class GPW_REST_API {
 		}
 
 		return new WP_REST_Response(array('plugins' => $result), 200);
+	}
+
+	/**
+	 * Ensure this plugin can manage updates for itself even before it has been registered.
+	 *
+	 * @param array<int, array<string, mixed>> $repositories Repository payloads.
+	 *
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function include_self_repository(array $repositories): array {
+		if (! defined('GPW_SELF_REPO_FULL_NAME') || '' === GPW_SELF_REPO_FULL_NAME) {
+			return $repositories;
+		}
+
+		$self_full_name = sanitize_text_field((string) GPW_SELF_REPO_FULL_NAME);
+		foreach ($repositories as $repository) {
+			if (! is_array($repository)) {
+				continue;
+			}
+
+			$repo_full_name = isset($repository['full_name']) ? sanitize_text_field((string) $repository['full_name']) : '';
+			if ($self_full_name === $repo_full_name) {
+				return $repositories;
+			}
+		}
+
+		$self_parts = explode('/', $self_full_name, 2);
+		$self_name  = isset($self_parts[1]) ? sanitize_text_field($self_parts[1]) : $self_full_name;
+
+		$repositories[] = array(
+			'name'        => $self_name,
+			'full_name'   => $self_full_name,
+			'description' => __('Git Repos Manager can update and verify its own release package.', 'git-plugins-wordpress'),
+		);
+
+		return $repositories;
 	}
 
 	/**
@@ -792,6 +829,14 @@ final class GPW_REST_API {
 
 		if ('' === (string) $request->get_param('channel')) {
 			$channel = $this->channel_manager->get_plugin_channel($repo_full_name);
+		}
+
+		$is_self = defined('GPW_SELF_REPO_FULL_NAME') && GPW_SELF_REPO_FULL_NAME === $repo_full_name;
+		if (! $is_self && null === $this->registry->get($repo_full_name)) {
+			return new WP_REST_Response(
+				array('message' => __('Only managed plugins can be updated from GitHub releases.', 'git-plugins-wordpress')),
+				403
+			);
 		}
 
 		if (! function_exists('get_plugins')) {

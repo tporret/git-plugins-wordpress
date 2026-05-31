@@ -641,19 +641,21 @@ export default function PluginsTab() {
                               {isUpdating ? 'Updating…' : 'Update'}
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => handleUninstall(plugin)}
-                            disabled={isUninstalling || isUpdating}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
-                          >
-                            {isUninstalling ? (
-                              <RefreshCw size={13} className="animate-spin" />
-                            ) : (
-                              <Trash2 size={13} />
-                            )}
-                            {isUninstalling ? 'Removing…' : 'Uninstall'}
-                          </button>
+                          {!plugin.is_self && (
+                            <button
+                              type="button"
+                              onClick={() => handleUninstall(plugin)}
+                              disabled={isUninstalling || isUpdating}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                            >
+                              {isUninstalling ? (
+                                <RefreshCw size={13} className="animate-spin" />
+                              ) : (
+                                <Trash2 size={13} />
+                              )}
+                              {isUninstalling ? 'Removing…' : 'Uninstall'}
+                            </button>
+                          )}
                         </div>
                       ) : (
                         <button

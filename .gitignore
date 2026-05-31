@@ -27,3 +27,5 @@ coverage/
 skills-lock.json
 testsite.md
 .agents/
+.tools/
+git-plugins-wordpress.html

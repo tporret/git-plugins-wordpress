@@ -77,6 +77,12 @@ final class GPW_Plugin_Deployment_Service {
 		$verification = $downloaded_package['verification'];
 		$release      = $downloaded_package['release'];
 
+		$package_validation = $this->validate_package_archive($package_path);
+		if (is_wp_error($package_validation)) {
+			$this->delete_temporary_file($package_path);
+			return $package_validation;
+		}
+
 		$skin     = new Automatic_Upgrader_Skin();
 		$upgrader = new Plugin_Upgrader($skin);
 		$result   = $upgrader->install($package_path);
@@ -99,6 +105,12 @@ final class GPW_Plugin_Deployment_Service {
 		wp_clean_plugins_cache(true);
 		$installed_after = get_plugins();
 		$plugin_file     = $this->resolve_installed_plugin_file($upgrader, $installed_before, $installed_after, $repo_full_name);
+		$validation      = $this->validate_installed_plugin_file($plugin_file, $installed_after);
+
+		if (is_wp_error($validation)) {
+			$this->cleanup_new_install($installed_before, $installed_after);
+			return $validation;
+		}
 
 		$this->registry->register_plugin($repo_full_name, $plugin_file, true, $verification);
 
@@ -149,9 +161,22 @@ final class GPW_Plugin_Deployment_Service {
 		$verification = $downloaded_package['verification'];
 		$release      = $downloaded_package['release'];
 
+		$package_validation = $this->validate_package_archive($package_path);
+		if (is_wp_error($package_validation)) {
+			$this->delete_temporary_file($package_path);
+			return $package_validation;
+		}
+
 		$was_network_active = is_multisite() && is_plugin_active_for_network($plugin_file);
 		$was_site_active    = is_plugin_active($plugin_file);
-		if ($was_network_active || $was_site_active) {
+		$is_self_update     = $this->is_current_plugin_file($plugin_file);
+		$backup             = $this->create_plugin_backup($plugin_file);
+		if (is_wp_error($backup)) {
+			$this->delete_temporary_file($package_path);
+			return $backup;
+		}
+
+		if (! $is_self_update && ($was_network_active || $was_site_active)) {
 			deactivate_plugins($plugin_file, true, $was_network_active);
 		}
 
@@ -162,7 +187,11 @@ final class GPW_Plugin_Deployment_Service {
 		$this->delete_temporary_file($package_path);
 
 		if (is_wp_error($result)) {
-			$this->restore_activation_state($plugin_file, $was_network_active, $was_site_active);
+			$this->restore_plugin_backup($backup);
+			if (! $is_self_update) {
+				$this->restore_activation_state($plugin_file, $was_network_active, $was_site_active);
+			}
+			$this->delete_plugin_backup($backup);
 			return $result;
 		}
 
@@ -172,24 +201,57 @@ final class GPW_Plugin_Deployment_Service {
 				$error_message = __('Plugin update failed.', 'git-plugins-wordpress');
 			}
 
-			$this->restore_activation_state($plugin_file, $was_network_active, $was_site_active);
+			$this->restore_plugin_backup($backup);
+			if (! $is_self_update) {
+				$this->restore_activation_state($plugin_file, $was_network_active, $was_site_active);
+			}
+			$this->delete_plugin_backup($backup);
 
 			return new WP_Error('gpw_plugin_update_failed', $error_message);
 		}
-
-		$this->restore_activation_state($plugin_file, $was_network_active, $was_site_active);
 
 		wp_clean_plugins_cache(true);
 		$installed_after       = get_plugins();
 		$resolved_plugin_file  = array_key_exists($plugin_file, $installed_after)
 			? $plugin_file
 			: $this->resolve_installed_plugin_file($upgrader, $installed_plugins, $installed_after, $repo_full_name);
+		$resolved_plugin_file  = '' !== $resolved_plugin_file ? $resolved_plugin_file : $plugin_file;
+		$validation            = $this->validate_installed_plugin_file($resolved_plugin_file, $installed_after);
 
-		$this->registry->register_plugin($repo_full_name, '' !== $resolved_plugin_file ? $resolved_plugin_file : $plugin_file, true, $verification);
+		if (is_wp_error($validation)) {
+			$this->restore_plugin_backup($backup);
+			if (! $is_self_update) {
+				$this->restore_activation_state($plugin_file, $was_network_active, $was_site_active);
+			}
+			$this->delete_plugin_backup($backup);
+			return $validation;
+		}
+
+		$activation_result = $is_self_update ? true : $this->restore_activation_state($resolved_plugin_file, $was_network_active, $was_site_active);
+		if (is_wp_error($activation_result)) {
+			$this->restore_plugin_backup($backup);
+			if (! $is_self_update) {
+				$this->restore_activation_state($plugin_file, $was_network_active, $was_site_active);
+			}
+			$this->delete_plugin_backup($backup);
+
+			return new WP_Error(
+				'gpw_plugin_update_activation_failed',
+				sprintf(
+					/* translators: %s: activation error message. */
+					__('The package was installed, but activation validation failed, so the previous version was restored: %s', 'git-plugins-wordpress'),
+					$activation_result->get_error_message()
+				)
+			);
+		}
+
+		$this->delete_plugin_backup($backup);
+
+		$this->registry->register_plugin($repo_full_name, $resolved_plugin_file, true, $verification);
 
 		return array(
 			'channel'     => $channel,
-			'plugin_file' => '' !== $resolved_plugin_file ? $resolved_plugin_file : $plugin_file,
+			'plugin_file' => $resolved_plugin_file,
 			'release'     => $release,
 			'verification' => $verification,
 		);
@@ -374,12 +436,312 @@ final class GPW_Plugin_Deployment_Service {
 	 * @param bool   $was_network_active Whether the plugin was network active.
 	 * @param bool   $was_site_active    Whether the plugin was site active.
 	 *
+	 * @return true|WP_Error
+	 */
+	private function restore_activation_state(string $plugin_file, bool $was_network_active, bool $was_site_active) {
+		if (! $was_network_active && ! $was_site_active) {
+			return true;
+		}
+
+		$result = activate_plugin($plugin_file, '', $was_network_active, true);
+		if (is_wp_error($result)) {
+			return $result;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check whether a plugin file points to this running plugin.
+	 *
+	 * @param string $plugin_file Plugin file relative path.
+	 *
+	 * @return bool
+	 */
+	private function is_current_plugin_file(string $plugin_file): bool {
+		if (! defined('GPW_PLUGIN_FILE')) {
+			return false;
+		}
+
+		return plugin_basename((string) GPW_PLUGIN_FILE) === $plugin_file;
+	}
+
+	/**
+	 * Validate a release archive before installing it into the plugins directory.
+	 *
+	 * @param string $package_path Downloaded release archive path.
+	 *
+	 * @return true|WP_Error
+	 */
+	private function validate_package_archive(string $package_path) {
+		if (! is_readable($package_path)) {
+			return new WP_Error('gpw_package_unreadable', __('Downloaded release archive could not be read for validation.', 'git-plugins-wordpress'));
+		}
+
+		$staging_dir = trailingslashit(get_temp_dir()) . 'gpw-package-' . md5($package_path . microtime(true));
+		if (! wp_mkdir_p($staging_dir)) {
+			return new WP_Error('gpw_package_staging_failed', __('Could not create a temporary directory to validate the release archive.', 'git-plugins-wordpress'));
+		}
+
+		$unzipped = unzip_file($package_path, $staging_dir);
+		if (is_wp_error($unzipped)) {
+			$this->delete_path($staging_dir);
+			return new WP_Error(
+				'gpw_package_extract_failed',
+				sprintf(
+					/* translators: %s: archive extraction error message. */
+					__('Release archive validation failed during extraction: %s', 'git-plugins-wordpress'),
+					$unzipped->get_error_message()
+				)
+			);
+		}
+
+		$plugin_files = $this->find_plugin_files_in_directory($staging_dir);
+		$this->delete_path($staging_dir);
+
+		if (empty($plugin_files)) {
+			return new WP_Error('gpw_package_missing_plugin_file', __('Release archive does not contain a valid WordPress plugin file.', 'git-plugins-wordpress'));
+		}
+
+		return true;
+	}
+
+	/**
+	 * Validate the installed plugin file before registration or activation.
+	 *
+	 * @param string                         $plugin_file       Plugin file relative to plugins directory.
+	 * @param array<string, array<string>>   $installed_plugins Installed plugin data.
+	 *
+	 * @return true|WP_Error
+	 */
+	private function validate_installed_plugin_file(string $plugin_file, array $installed_plugins) {
+		if ('' === $plugin_file) {
+			return new WP_Error('gpw_plugin_file_unresolved', __('The installed package did not expose a resolvable WordPress plugin file.', 'git-plugins-wordpress'));
+		}
+
+		if (! array_key_exists($plugin_file, $installed_plugins)) {
+			return new WP_Error('gpw_plugin_file_missing', __('The installed package is missing its main plugin file.', 'git-plugins-wordpress'));
+		}
+
+		$plugin_path = WP_PLUGIN_DIR . '/' . ltrim($plugin_file, '/');
+		if (! is_file($plugin_path) || ! is_readable($plugin_path)) {
+			return new WP_Error('gpw_plugin_file_unreadable', __('The installed plugin file could not be read.', 'git-plugins-wordpress'));
+		}
+
+		$validation = validate_plugin($plugin_file);
+		if (is_wp_error($validation)) {
+			return new WP_Error(
+				'gpw_plugin_file_invalid',
+				sprintf(
+					/* translators: %s: plugin validation error message. */
+					__('Installed plugin validation failed: %s', 'git-plugins-wordpress'),
+					$validation->get_error_message()
+				)
+			);
+		}
+
+		if (function_exists('validate_plugin_requirements')) {
+			$requirements = validate_plugin_requirements($plugin_file);
+			if (is_wp_error($requirements)) {
+				return new WP_Error(
+					'gpw_plugin_requirements_failed',
+					sprintf(
+						/* translators: %s: plugin requirements error message. */
+						__('Installed plugin requirements failed: %s', 'git-plugins-wordpress'),
+						$requirements->get_error_message()
+					)
+				);
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Remove files created by a failed fresh install.
+	 *
+	 * @param array<string, array<string>> $installed_before Plugins before installation.
+	 * @param array<string, array<string>> $installed_after  Plugins after installation.
+	 *
 	 * @return void
 	 */
-	private function restore_activation_state(string $plugin_file, bool $was_network_active, bool $was_site_active): void {
-		if ($was_network_active || $was_site_active) {
-			activate_plugin($plugin_file, '', $was_network_active, true);
+	private function cleanup_new_install(array $installed_before, array $installed_after): void {
+		$new_plugin_files = array_values(array_diff(array_keys($installed_after), array_keys($installed_before)));
+		foreach ($new_plugin_files as $new_plugin_file) {
+			$this->delete_path($this->get_plugin_path((string) $new_plugin_file));
 		}
+
+		wp_clean_plugins_cache(true);
+	}
+
+	/**
+	 * Create a temporary backup of the plugin being updated.
+	 *
+	 * @param string $plugin_file Plugin file relative to plugins directory.
+	 *
+	 * @return array{original_path: string, backup_path: string}|WP_Error
+	 */
+	private function create_plugin_backup(string $plugin_file) {
+		$original_path = $this->get_plugin_path($plugin_file);
+		if (! file_exists($original_path)) {
+			return new WP_Error('gpw_plugin_backup_missing_source', __('Cannot back up the installed plugin because its files are missing.', 'git-plugins-wordpress'));
+		}
+
+		$backup_path = trailingslashit(get_temp_dir()) . 'gpw-plugin-backup-' . md5($plugin_file . microtime(true));
+		$copied      = $this->copy_path($original_path, $backup_path);
+		if (is_wp_error($copied)) {
+			$this->delete_path($backup_path);
+			return $copied;
+		}
+
+		return array(
+			'original_path' => $original_path,
+			'backup_path'   => $backup_path,
+		);
+	}
+
+	/**
+	 * Restore an updated plugin from its temporary backup.
+	 *
+	 * @param array{original_path: string, backup_path: string} $backup Backup metadata.
+	 *
+	 * @return true|WP_Error
+	 */
+	private function restore_plugin_backup(array $backup) {
+		$this->delete_path($backup['original_path']);
+		$restored = $this->copy_path($backup['backup_path'], $backup['original_path']);
+		wp_clean_plugins_cache(true);
+
+		return $restored;
+	}
+
+	/**
+	 * Delete a temporary plugin backup.
+	 *
+	 * @param array{backup_path: string} $backup Backup metadata.
+	 *
+	 * @return void
+	 */
+	private function delete_plugin_backup(array $backup): void {
+		$this->delete_path($backup['backup_path']);
+	}
+
+	/**
+	 * Find plugin header files under a directory.
+	 *
+	 * @param string $directory Directory to scan.
+	 *
+	 * @return array<int, string>
+	 */
+	private function find_plugin_files_in_directory(string $directory): array {
+		$plugin_files = array();
+		$iterator     = new RecursiveIteratorIterator(
+			new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS)
+		);
+
+		foreach ($iterator as $file) {
+			if (! $file instanceof SplFileInfo || ! $file->isFile() || 'php' !== strtolower($file->getExtension())) {
+				continue;
+			}
+
+			$headers = get_file_data($file->getPathname(), array('name' => 'Plugin Name'));
+			if (isset($headers['name']) && '' !== trim((string) $headers['name'])) {
+				$plugin_files[] = $file->getPathname();
+			}
+		}
+
+		return $plugin_files;
+	}
+
+	/**
+	 * Get the file or directory path that represents a plugin install.
+	 *
+	 * @param string $plugin_file Plugin file relative to plugins directory.
+	 *
+	 * @return string
+	 */
+	private function get_plugin_path(string $plugin_file): string {
+		$plugin_path = WP_PLUGIN_DIR . '/' . ltrim($plugin_file, '/');
+		$plugin_dir  = dirname($plugin_path);
+
+		return WP_PLUGIN_DIR === $plugin_dir ? $plugin_path : $plugin_dir;
+	}
+
+	/**
+	 * Copy a file or directory recursively.
+	 *
+	 * @param string $source      Source path.
+	 * @param string $destination Destination path.
+	 *
+	 * @return true|WP_Error
+	 */
+	private function copy_path(string $source, string $destination) {
+		if (is_dir($source)) {
+			if (! wp_mkdir_p($destination)) {
+				return new WP_Error('gpw_copy_directory_failed', __('Could not create a temporary plugin backup directory.', 'git-plugins-wordpress'));
+			}
+
+			$iterator = new RecursiveIteratorIterator(
+				new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS),
+				RecursiveIteratorIterator::SELF_FIRST
+			);
+
+			foreach ($iterator as $item) {
+				$target = $destination . '/' . $iterator->getSubPathName();
+				if ($item->isDir()) {
+					if (! wp_mkdir_p($target)) {
+						return new WP_Error('gpw_copy_directory_failed', __('Could not copy the installed plugin directory for rollback.', 'git-plugins-wordpress'));
+					}
+					continue;
+				}
+
+				if (! copy($item->getPathname(), $target)) {
+					return new WP_Error('gpw_copy_file_failed', __('Could not copy the installed plugin files for rollback.', 'git-plugins-wordpress'));
+				}
+			}
+
+			return true;
+		}
+
+		if (! wp_mkdir_p(dirname($destination)) || ! copy($source, $destination)) {
+			return new WP_Error('gpw_copy_file_failed', __('Could not copy the installed plugin file for rollback.', 'git-plugins-wordpress'));
+		}
+
+		return true;
+	}
+
+	/**
+	 * Delete a file or directory recursively.
+	 *
+	 * @param string $path Path to delete.
+	 *
+	 * @return void
+	 */
+	private function delete_path(string $path): void {
+		if ('' === $path || ! file_exists($path)) {
+			return;
+		}
+
+		if (is_file($path) || is_link($path)) {
+			wp_delete_file($path);
+			return;
+		}
+
+		$iterator = new RecursiveIteratorIterator(
+			new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+			RecursiveIteratorIterator::CHILD_FIRST
+		);
+
+		foreach ($iterator as $item) {
+			if ($item->isDir() && ! $item->isLink()) {
+				rmdir($item->getPathname());
+				continue;
+			}
+
+			wp_delete_file($item->getPathname());
+		}
+
+		rmdir($path);
 	}
 
 	/**

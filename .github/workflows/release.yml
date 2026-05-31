@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ github.event.inputs.tag_name || github.event.release.tag_name || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -58,6 +58,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.CHECKOUT_REF }}
 
+      - name: Install archive tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rsync zip unzip
+
       # ---------------------------------------------------------------
       # Point 5 — Plugin slug detection with override support.
       #
@@ -75,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          MAIN_PLUGIN_FILE="$(grep -RIl --include='*.php' '^[[:space:]]*\*\?[[:space:]]*Plugin Name:' . | head -n 1 || true)"
+          MAIN_PLUGIN_FILE="$(grep -RIl --include='*.php' --exclude-dir='.git' --exclude-dir='node_modules' --exclude-dir='vendor' --exclude-dir='dist' '^[[:space:]]*\*\?[[:space:]]*Plugin Name:' . | head -n 1 || true)"
           if [ -z "${MAIN_PLUGIN_FILE}" ]; then
             echo "::error::No PHP file with a 'Plugin Name' header was found."
             exit 1
@@ -277,8 +284,15 @@ jobs:
           if [ -n "${BUILD_SCRIPT}" ]; then
             echo "Running custom build: ${BUILD_SCRIPT}"
             eval "${BUILD_SCRIPT}"
+          elif node -e "const pkg=require('./package.json'); process.exit(pkg.scripts && pkg.scripts.build ? 0 : 1)"; then
+            case "${PM}" in
+              npm) npm run build ;;
+              pnpm) pnpm run build ;;
+              yarn) yarn run build ;;
+              bun) bun run build ;;
+            esac
           else
-            ${PM} run build --if-present
+            echo "No build script declared in package.json; skipping frontend build."
           fi
 
       - name: Install Composer dependencies (if applicable)
@@ -387,8 +401,11 @@ jobs:
 
           test -f "verify-dist/${PLUGIN_SLUG}/${MAIN_PLUGIN_FILE#./}"
 
-          if [ -d "verify-dist/${PLUGIN_SLUG}/build" ]; then
+          if [ -f package.json ] && node -e "const pkg=require('./package.json'); process.exit(pkg.scripts && pkg.scripts.build ? 0 : 1)"; then
+            test -d "verify-dist/${PLUGIN_SLUG}/build"
             find "verify-dist/${PLUGIN_SLUG}/build" -type f | grep -q .
+            test -f "verify-dist/${PLUGIN_SLUG}/build/index.js"
+            test -f "verify-dist/${PLUGIN_SLUG}/build/index.asset.php"
           fi
 
           if [ -d "verify-dist/${PLUGIN_SLUG}/vendor" ]; then
