@@ -63,6 +63,11 @@ final class GPW_Plugin_Deployment_Service {
 
 		$this->load_wordpress_upgrade_dependencies();
 
+		$filesystem = $this->initialize_wordpress_filesystem();
+		if (is_wp_error($filesystem)) {
+			return $filesystem;
+		}
+
 		$permissions_error = $this->get_plugins_directory_permissions_error_message();
 		if ('' !== $permissions_error) {
 			return new WP_Error('gpw_plugins_dir_not_writable', $permissions_error);
@@ -141,6 +146,11 @@ final class GPW_Plugin_Deployment_Service {
 		}
 
 		$this->load_wordpress_upgrade_dependencies();
+
+		$filesystem = $this->initialize_wordpress_filesystem();
+		if (is_wp_error($filesystem)) {
+			return $filesystem;
+		}
 
 		$installed_plugins = get_plugins();
 		if (! array_key_exists($plugin_file, $installed_plugins)) {
@@ -311,6 +321,28 @@ final class GPW_Plugin_Deployment_Service {
 		require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
 		require_once ABSPATH . 'wp-admin/includes/file.php';
 		require_once ABSPATH . 'wp-admin/includes/plugin.php';
+	}
+
+	/**
+	 * Initialize the WordPress filesystem abstraction for archive validation and installs.
+	 *
+	 * @return true|WP_Error
+	 */
+	private function initialize_wordpress_filesystem() {
+		global $wp_filesystem;
+
+		if ($wp_filesystem && is_object($wp_filesystem)) {
+			return true;
+		}
+
+		if (WP_Filesystem(false, WP_PLUGIN_DIR, true)) {
+			return true;
+		}
+
+		return new WP_Error(
+			'gpw_filesystem_unavailable',
+			__('WordPress could not initialize filesystem access for plugin installation or update. This site may require filesystem credentials or direct write access for the web server user.', 'git-plugins-wordpress')
+		);
 	}
 
 	/**
