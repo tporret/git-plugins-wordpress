@@ -5,7 +5,7 @@ Tags: github, plugin-updates, deployment
 Requires at least: 6.0
 Tested up to: 7.0
 Requires PHP: 8.1
-Stable tag: 1.3.0
+Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -93,6 +93,10 @@ Managed installs and updates download the release ZIP together with its matching
 
 == Changelog ==
 
+= 1.4.0 =
+* Fixed managed install and update flows to initialize WordPress filesystem access before release archive validation.
+* Improved filesystem error reporting when the server requires credentials or does not allow direct write access during managed installs.
+
 = 1.3.0 =
 * Added self-management support for Git Repos Manager so a manually installed copy can update itself from a verified release package and record verification from that point forward.
 * Limited manual install adoption to this plugin only; other manually installed plugins must already be managed before GitHub release updates are allowed.
@@ -135,6 +139,9 @@ Managed installs and updates download the release ZIP together with its matching
 * Hardened token header scoping and key-rotation detection.
 
 == Upgrade Notice ==
+
+= 1.4.0 =
+Improves managed install and update reliability on hosts that require explicit WordPress filesystem initialization.
 
 = 1.3.0 =
 Adds verified self-update adoption for Git Repos Manager manual installs and WordPress 7.0 compatibility metadata.
